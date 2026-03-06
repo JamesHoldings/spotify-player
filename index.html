@@ -19,54 +19,54 @@
         .meta { flex-grow: 1; overflow: hidden; }
         #track-name { font-size: 0.9rem; font-weight: bold; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         #artist-name { font-size: 0.8rem; color: var(--text-dim); margin: 2px 0 0 0; }
-        #context-label { font-size: 0.7rem; color: var(--text-dim); margin-top: 4px; }
 
-        /* Device Selection UI with Scrolling */
-        #device-btn { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 1.2rem; transition: 0.2s; }
-        #device-btn:hover { color: var(--sp-green); }
+        /* DEVICE PANEL ADJUSTMENTS */
+        #device-btn { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 1.2rem; }
         
         #device-menu { 
-            position: absolute; top: 100%; right: 0; background: #333; border-radius: 8px; 
-            width: 200px; display: none; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.5); 
-            z-index: 100; padding: 8px; margin-top: 5px; border: 1px solid #444;
-            /* Scrollable Properties */
-            max-height: 180px; 
+            position: absolute; 
+            bottom: 40px; /* Positioned higher above the bottom bar */
+            right: 10px; 
+            background: #333; 
+            border-radius: 8px; 
+            width: 180px; 
+            display: none; 
+            flex-direction: column; 
+            box-shadow: 0 5px 15px rgba(0,0,0,0.5); 
+            z-index: 100; 
+            padding: 5px; 
+            border: 1px solid #444;
+            /* Shorter Height */
+            max-height: 120px; 
             overflow-y: auto;
         }
 
-        /* Custom Scrollbar for the Device List */
-        #device-menu::-webkit-scrollbar { width: 6px; }
-        #device-menu::-webkit-scrollbar-thumb { background: #555; border-radius: 10px; }
-        #device-menu::-webkit-scrollbar-track { background: transparent; }
+        /* Slim Scrollbar */
+        #device-menu::-webkit-scrollbar { width: 4px; }
+        #device-menu::-webkit-scrollbar-thumb { background: #666; border-radius: 10px; }
 
-        .device-option { padding: 10px; font-size: 0.8rem; cursor: pointer; border-radius: 4px; border: none; background: none; color: white; text-align: left; width: 100%; display: flex; justify-content: space-between; align-items: center; }
-        .device-option:hover { background: #444; }
+        .device-option { padding: 8px; font-size: 0.75rem; cursor: pointer; border-radius: 4px; border: none; background: none; color: white; text-align: left; width: 100%; display: flex; justify-content: space-between; }
+        .device-option:hover { background: #444; color: var(--sp-green); }
         .active-device { color: var(--sp-green); font-weight: bold; }
 
-        /* Progress Bar */
         #progress-container { width: 100%; height: 4px; background: #4d4d4d; border-radius: 2px; }
-        #progress-bar { width: 0%; height: 100%; background: var(--text-main); border-radius: 2px; transition: width 0.4s linear; }
+        #progress-bar { width: 0%; height: 100%; background: var(--text-main); border-radius: 2px; }
 
         .bottom-row { display: flex; align-items: center; justify-content: space-between; }
         .controls { display: flex; align-items: center; gap: 15px; }
         .btn-nav { background: none; border: none; color: var(--text-main); cursor: pointer; font-size: 1.2rem; }
-        #play-btn { background: white; color: black; border: none; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 1rem; }
-        
+        #play-btn { background: white; color: black; border: none; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; }
         #time-display { font-size: 0.75rem; color: var(--text-dim); }
-        #login-overlay { position: absolute; inset: 0; background: var(--bg-grey); border-radius: 12px; display: flex; align-items: center; justify-content: center; z-index: 200; }
     </style>
 </head>
 <body>
 
     <div id="player-container">
-        <div id="login-overlay" style="display:none;"><button onclick="redirectToAuth()" style="background:var(--sp-green); border:none; padding:10px 20px; border-radius:20px; font-weight:bold; cursor:pointer;">Connect Spotify</button></div>
-
         <div class="top-row">
             <div id="album-art"></div>
             <div class="meta">
                 <p id="track-name">Paused</p>
                 <p id="artist-name">Ready</p>
-                <p id="context-label">My Liked Songs</p>
             </div>
             <button id="device-btn" onclick="toggleDevices()">📱</button>
             <div id="device-menu"></div>
@@ -87,81 +87,43 @@
     <script src="https://sdk.scdn.co/spotify-player.js"></script>
     <script>
         const clientId = 'ccb3b4e6e11b48fc9ba11bc154e65534';
-        const redirectUri = window.location.origin + window.location.pathname;
+        const accessToken = localStorage.getItem('access_token');
         let player;
 
-        // PKCE Flow
-        const rand = (l) => Array.from(crypto.getRandomValues(new Uint8Array(l))).map(x => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[x % 62]).join('');
-        const hash = async (p) => window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(p));
-        const enc = (i) => btoa(String.fromCharCode(...new Uint8Array(i))).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-
-        async function redirectToAuth() {
-            const v = rand(64); const c = enc(await hash(v));
-            localStorage.setItem('code_verifier', v);
-            const p = new URLSearchParams({ response_type: 'code', client_id: clientId, scope: 'streaming user-read-playback-state user-modify-playback-state', code_challenge_method: 'S256', code_challenge: c, redirect_uri: redirectUri });
-            window.location.href = `https://accounts.spotify.com/authorize?${p.toString()}`;
-        }
-
-        async function init() {
-            const code = new URLSearchParams(window.location.search).get('code');
-            if (code) {
-                const v = localStorage.getItem('code_verifier');
-                const r = await fetch('https://accounts.spotify.com/api/token', {
-                    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: new URLSearchParams({ client_id: clientId, grant_type: 'authorization_code', code, redirect_uri: redirectUri, code_verifier: v })
-                });
-                const d = await r.json();
-                localStorage.setItem('access_token', d.access_token);
-                window.history.replaceState({}, document.title, window.location.pathname);
-            }
-            if (!localStorage.getItem('access_token')) document.getElementById('login-overlay').style.display = 'flex';
+        // --- IMPROVED DEVICE TRANSFER ---
+        async function transferPlayback(deviceId) {
+            // Setting 'play: true' ensures the music starts immediately on the new device
+            await fetch('https://api.spotify.com/v1/me/player', {
+                method: 'PUT',
+                body: JSON.stringify({ device_ids: [deviceId], play: true }),
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` }
+            });
+            document.getElementById('device-menu').style.display = 'none';
         }
 
         async function toggleDevices() {
             const menu = document.getElementById('device-menu');
             if (menu.style.display === 'flex') { menu.style.display = 'none'; return; }
             
-            const token = localStorage.getItem('access_token');
             const res = await fetch('https://api.spotify.com/v1/me/player/devices', {
-                headers: { 'Authorization': `Bearer ${token}` }
+                headers: { 'Authorization': `Bearer ${accessToken}` }
             });
             const data = await res.json();
             
-            menu.innerHTML = '<p style="font-size:0.6rem; color:#b3b3b3; margin:5px; position:sticky; top:0; background:#333;">SELECT DEVICE</p>';
+            menu.innerHTML = '';
             data.devices.forEach(d => {
                 const item = document.createElement('button');
                 item.className = `device-option ${d.is_active ? 'active-device' : ''}`;
-                let icon = '📱';
-                if(d.type === 'Computer') icon = '💻';
-                if(d.type === 'Speaker') icon = '🔊';
-                
-                item.innerHTML = `<span>${d.name}</span> <span>${icon}</span>`;
+                item.innerHTML = `<span>${d.name}</span> <span>${d.is_active ? '●' : ''}</span>`;
                 item.onclick = () => transferPlayback(d.id);
                 menu.appendChild(item);
             });
             menu.style.display = 'flex';
         }
 
-        async function transferPlayback(deviceId) {
-            const token = localStorage.getItem('access_token');
-            await fetch('https://api.spotify.com/v1/me/player', {
-                method: 'PUT',
-                body: JSON.stringify({ device_ids: [deviceId], play: false }),
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
-            });
-            document.getElementById('device-menu').style.display = 'none';
-        }
-
         window.onSpotifyWebPlaybackSDKReady = () => {
-            const token = localStorage.getItem('access_token');
-            if (!token) return;
-            player = new Spotify.Player({ name: 'James Dashboard Player', getOAuthToken: cb => cb(token) });
-
-            player.addListener('ready', ({ device_id }) => {
-                // Register dashboard as device but stay paused
-                transferPlayback(device_id);
-            });
-
+            player = new Spotify.Player({ name: 'James Dashboard', getOAuthToken: cb => cb(accessToken) });
+            
             player.addListener('player_state_changed', state => {
                 if (!state) return;
                 const track = state.track_window.current_track;
@@ -170,20 +132,10 @@
                 document.getElementById('album-art').style.backgroundImage = `url(${track.album.images[0].url})`;
                 document.getElementById('play-btn').innerText = state.paused ? '▶' : '⏸';
                 document.getElementById('progress-bar').style.width = (state.position / state.duration) * 100 + '%';
-                const mins = Math.floor(state.position / 60000); 
-                const secs = Math.floor((state.position % 60000) / 1000);
-                document.getElementById('time-display').innerText = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
             });
+
             player.connect();
         };
-
-        window.addEventListener('click', (e) => {
-            if (!e.target.closest('#device-btn') && !e.target.closest('#device-menu')) {
-                document.getElementById('device-menu').style.display = 'none';
-            }
-        });
-
-        init();
     </script>
 </body>
 </html>
