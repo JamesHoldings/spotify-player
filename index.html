@@ -245,11 +245,12 @@
             background: var(--sp-green);
             color: black;
             border: none;
-            padding: 9px 22px;
+            padding: 12px 24px;
             border-radius: 999px;
             font-weight: 700;
             cursor: pointer;
-            font-size: 0.85rem;
+            font-size: 0.9rem;
+            box-shadow: 0 4px 15px rgba(29, 185, 84, 0.4);
         }
     </style>
 </head>
@@ -257,8 +258,9 @@
 
 <div id="player-container">
     <div id="login-overlay">
-        <h2 style="margin: 0 0 6px 0; font-size: 0.95rem;">Authentication</h2>
-        <button class="login-btn" onclick="redirectToAuth()">Connect Spotify</button>
+        <h2 style="margin: 0 0 12px 0; font-size: 1rem;">Connect Your Spotify</h2>
+        <button class="login-btn" onclick="redirectToAuth()">Login & Wake Device</button>
+        <p style="font-size: 0.65rem; color: var(--text-dim); margin-top: 10px; text-align: center;">Required to show "James Dashboard" in your device list.</p>
     </div>
 
     <div class="top-row">
@@ -271,7 +273,7 @@
         <div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px;">
             <div id="status-chip" class="offline">
                 <div id="status-dot"></div>
-                <span id="status-text">Offline</span>
+                <span id="status-text">Disconnected</span>
             </div>
             <button id="device-btn" onclick="toggleDevices()">📱</button>
         </div>
@@ -307,8 +309,7 @@
     let progressTickerId = null;
     let isScrubbing = false;
 
-    // --- POPUP HANDLER (Required for Iframe usage) ---
-    // If the window has a 'code' param and an 'opener', it's the popup.
+    // --- POPUP HANDLER ---
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
 
@@ -317,7 +318,6 @@
         window.close();
     }
 
-    // Main window listens for the code from the popup
     window.addEventListener('message', async (event) => {
         if (event.origin !== window.location.origin) return;
         if (event.data.type === 'SPOTIFY_CODE') {
@@ -328,12 +328,16 @@
                 localStorage.setItem('token_expires_at', String(Date.now() + (data.expires_in * 1000)));
                 showLoginOverlay(false);
                 startPolling();
-                if (player) player.connect(); // Wake up the device
+                
+                // Re-init player to ensure it shows up in devices
+                if (player) {
+                    player.connect();
+                    player.activateElement(); 
+                }
             }
         }
     });
 
-    // --- Auth Logic ---
     const generateRandomString = (l) => Array.from(crypto.getRandomValues(new Uint8Array(l))).map(x => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[x % 62]).join('');
     const sha256 = async (plain) => window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(plain));
     const base64encode = (input) => btoa(String.fromCharCode(...new Uint8Array(input))).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -346,7 +350,7 @@
         
         const params = new URLSearchParams({
             response_type: 'code', client_id: clientId,
-            scope: 'streaming user-read-playback-state user-modify-playback-state',
+            scope: 'streaming user-read-playback-state user-modify-playback-state user-read-currently-playing user-read-private',
             code_challenge_method: 'S256', code_challenge: c, redirect_uri: redirectUri
         });
         
@@ -409,17 +413,27 @@
 
     function showLoginOverlay(show) {
         document.getElementById('login-overlay').style.display = show ? 'flex' : 'none';
+        updateStatusDisplay(show ? 'offline' : 'ready');
+    }
+
+    function updateStatusDisplay(state) {
         const chip = document.getElementById('status-chip');
         const text = document.getElementById('status-text');
-        if (show) { chip.classList.add('offline'); text.textContent = 'Auth Required'; stopPolling(); }
-        else { chip.classList.remove('offline'); text.textContent = 'Synced'; }
+        if (state === 'offline') {
+            chip.classList.add('offline');
+            text.textContent = 'Auth Required';
+            stopPolling();
+        } else if (state === 'ready') {
+            chip.classList.remove('offline');
+            text.textContent = 'Device Ready';
+        }
     }
 
     // --- Player UI Updates ---
     function applyApiState(data) {
         if (!data || !data.item) {
             document.getElementById('track-name').textContent = "Idle";
-            document.getElementById('artist-name').textContent = "No playback detected";
+            document.getElementById('artist-name').textContent = "Pick a song on Spotify";
             document.getElementById('album-art').style.backgroundImage = 'none';
             return;
         }
@@ -427,11 +441,10 @@
         document.getElementById('track-name').textContent = track.name;
         document.getElementById('artist-name').textContent = track.artists.map(a => a.name).join(', ');
         const artUrl = track.album.images[0].url;
-        const artDiv = document.getElementById('album-art');
-        if (artDiv.style.backgroundImage !== `url("${artUrl}")`) artDiv.style.backgroundImage = `url(${artUrl})`;
+        document.getElementById('album-art').style.backgroundImage = `url(${artUrl})`;
         
         document.getElementById('play-btn').textContent = data.is_playing ? '⏸' : '▶';
-        document.getElementById('device-label').textContent = data.device ? `On ${data.device.name}` : '';
+        document.getElementById('device-label').textContent = data.device ? `Listening on ${data.device.name}` : '';
         
         currentDurationMs = track.duration_ms;
         lastKnownPositionMs = data.progress_ms;
@@ -458,7 +471,7 @@
 
     function startPolling() { 
         stopPolling(); 
-        pollIntervalId = setInterval(pollPlaybackState, 5000);
+        pollIntervalId = setInterval(pollPlaybackState, 4000);
         pollPlaybackState();
     }
     
@@ -518,6 +531,33 @@
         window.onmouseup = () => isScrubbing = false;
     }
 
+    // --- SDK SETUP ---
+    window.onSpotifyWebPlaybackSDKReady = () => {
+        player = new Spotify.Player({
+            name: 'James Dashboard',
+            getOAuthToken: async cb => { 
+                const t = await ensureValidToken(); 
+                if (t) cb(t); 
+            },
+            volume: 0.8
+        });
+
+        player.addListener('ready', ({ device_id }) => {
+            console.log('SDK: James Dashboard is live!', device_id);
+            updateStatusDisplay('ready');
+            pollPlaybackState();
+        });
+
+        player.addListener('not_ready', ({ device_id }) => {
+            console.log('SDK: Device went offline', device_id);
+        });
+
+        player.addListener('initialization_error', ({ message }) => console.error(message));
+        player.addListener('authentication_error', ({ message }) => showLoginOverlay(true));
+
+        player.connect();
+    };
+
     async function init() {
         const token = await ensureValidToken();
         if (token) {
@@ -528,27 +568,6 @@
         }
         attachScrubHandlers();
     }
-
-    // Connect to SDK for Device visibility
-    window.onSpotifyWebPlaybackSDKReady = () => {
-        player = new Spotify.Player({
-            name: 'James Dashboard',
-            getOAuthToken: async cb => { const t = await ensureValidToken(); if (t) cb(t); }
-        });
-
-        player.addListener('ready', ({ device_id }) => {
-            console.log('James Dashboard Ready with ID:', device_id);
-            pollPlaybackState();
-        });
-
-        player.addListener('not_ready', ({ device_id }) => {
-            console.log('Device ID has gone offline', device_id);
-        });
-
-        player.connect().then(success => {
-            if (success) console.log('SDK Connected');
-        });
-    };
 
     init();
 </script>
