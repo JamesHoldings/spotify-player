@@ -418,10 +418,17 @@
     let lastStatePaused = true;
     let isScrubbing = false;
 
-    // Polling + local timer: so we see state when playing on ANY device (Echo, phone, etc.)
     let pollIntervalId = null;
     let progressTickerId = null;
     let lastApiState = null;
+
+    function isInIframe() {
+        try {
+            return window.self !== window.top;
+        } catch (e) {
+            return true;
+        }
+    }
 
     // ---------- AUTH (PKCE) + TOKEN MANAGEMENT ----------
 
@@ -454,7 +461,18 @@
             redirect_uri: redirectUri
         });
 
-        window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
+        const authUrl = `https://accounts.spotify.com/authorize?${params.toString()}`;
+
+        if (isInIframe()) {
+            var w = 500, h = 700;
+            var left = (screen.width - w) / 2;
+            var top = (screen.height - h) / 2;
+            var popup = window.open(authUrl, 'spotify-auth', 'width=' + w + ',height=' + h + ',left=' + left + ',top=' + top + ',toolbar=no,menubar=no,scrollbars=yes');
+            if (popup) window._spotifyAuthPopup = popup;
+            return;
+        }
+
+        window.location.href = authUrl;
     }
 
     async function getToken(code) {
@@ -551,11 +569,10 @@
         }
     }
 
-    // ---------- PLAYBACK STATE FROM WEB API (works for any device: Echo, phone, browser) ----------
+    // ---------- PLAYBACK STATE FROM WEB API ----------
 
     function applyApiState(data) {
         if (!data || !data.item) {
-            // No active playback
             document.getElementById('track-name').textContent = 'Nothing Playing';
             document.getElementById('artist-name').textContent = 'Paused or no device';
             document.getElementById('album-art').style.backgroundImage = 'none';
@@ -677,7 +694,7 @@
         menu.style.display = 'flex';
     }
 
-    // ---------- CONTROLS VIA WEB API (controls whatever device is active: Echo, phone, this tab) ----------
+    // ---------- CONTROLS VIA WEB API ----------
 
     async function handlePlayToggle() {
         const data = await apiFetch('https://api.spotify.com/v1/me/player');
@@ -700,7 +717,7 @@
         if (r !== null) setTimeout(pollPlaybackState, 150);
     }
 
-    // ---------- SCRUB BAR (seek via Web API) ----------
+    // ---------- SCRUB BAR ----------
 
     function formatTime(ms) {
         const totalSeconds = Math.floor(ms / 1000);
@@ -772,8 +789,6 @@
         timeTotal.textContent = durationMs ? formatTime(durationMs) : '0:00';
     }
 
-    // ---------- UI STATE ----------
-
     function showLoginOverlay(show) {
         document.getElementById('login-overlay').style.display = show ? 'flex' : 'none';
         const statusChip = document.getElementById('status-chip');
@@ -792,6 +807,16 @@
     // ---------- INIT ----------
 
     async function init() {
+        window.addEventListener('message', function (e) {
+            if (!e.data || e.data.type !== 'spotify-auth-done') return;
+            try {
+                if (window._spotifyAuthPopup && !window._spotifyAuthPopup.closed) window._spotifyAuthPopup.close();
+            } catch (err) {}
+            window._spotifyAuthPopup = null;
+            showLoginOverlay(false);
+            startPolling();
+        });
+
         const urlParams = new URLSearchParams(window.location.search);
         const code = urlParams.get('code');
 
@@ -805,12 +830,24 @@
                         localStorage.setItem('refresh_token', data.refresh_token);
                     }
                     localStorage.setItem('token_expires_at', String(expiresAt));
+                    window.history.replaceState({}, document.title, window.location.pathname || '/');
+
+                    if (window.opener && !window.opener.closed) {
+                        try {
+                            window.opener.postMessage({ type: 'spotify-auth-done' }, '*');
+                        } catch (err) {}
+                        window.close();
+                        return;
+                    }
+
                     showLoginOverlay(false);
                 }
             } catch (err) {
                 console.error('Error getting token:', err);
             } finally {
-                window.history.replaceState({}, document.title, window.location.pathname);
+                if (!window.opener) {
+                    window.history.replaceState({}, document.title, window.location.pathname || '/');
+                }
             }
         }
 
@@ -842,8 +879,6 @@
 
         player.addListener('ready', ({ device_id }) => {
             showLoginOverlay(false);
-            // Do NOT transfer playback here — leave the user's current device (Echo, phone, etc.) active.
-            // "James Dashboard" will appear in the device list if they want to switch to this tab.
             startPolling();
         });
 
