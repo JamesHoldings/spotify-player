@@ -9,52 +9,58 @@
         body { background: transparent; color: var(--text-main); font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; align-items: center; justify-content: center; height: 100vh; overflow: hidden; }
         
         #player-container { 
-            background: var(--bg-grey); width: 340px; padding: 15px; border-radius: 12px; 
+            background: var(--bg-grey); width: 360px; padding: 15px; border-radius: 12px; 
             display: flex; flex-direction: column; gap: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); position: relative;
         }
 
-        .top-row { display: flex; gap: 15px; align-items: center; position: relative; }
-        #album-art { width: 60px; height: 60px; border-radius: 4px; background-size: cover; background-color: #121212; flex-shrink: 0; }
+        .top-row { display: flex; gap: 12px; align-items: center; position: relative; }
+        #album-art { width: 64px; height: 64px; border-radius: 4px; background-size: cover; background-color: #121212; flex-shrink: 0; }
         
         .meta { flex-grow: 1; overflow: hidden; }
         #track-name { font-size: 0.9rem; font-weight: bold; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         #artist-name { font-size: 0.8rem; color: var(--text-dim); margin: 2px 0 0 0; }
-        
-        /* Device Selector Styling */
-        #device-btn { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 1.1rem; padding: 5px; transition: 0.2s; }
-        #device-btn:hover { color: var(--sp-green); }
-        #device-list { 
-            position: absolute; bottom: 100%; right: 0; background: #333; border-radius: 8px; 
-            width: 150px; display: none; flex-direction: column; box-shadow: 0 4px 12px rgba(0,0,0,0.5); z-index: 20; padding: 5px;
-        }
-        .device-item { padding: 8px; font-size: 0.75rem; cursor: pointer; border-radius: 4px; border: none; background: none; color: white; text-align: left; width: 100%; }
-        .device-item:hover { background: #444; color: var(--sp-green); }
+        #context-label { font-size: 0.7rem; color: var(--text-dim); margin-top: 4px; }
 
+        /* Device Selection UI */
+        #device-btn { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 1.2rem; transition: 0.2s; }
+        #device-btn:hover { color: var(--sp-green); }
+        
+        #device-menu { 
+            position: absolute; top: 100%; right: 0; background: #333; border-radius: 8px; 
+            width: 180px; display: none; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.5); z-index: 100; padding: 8px;
+            margin-top: 5px; border: 1px solid #444;
+        }
+        .device-option { padding: 10px; font-size: 0.8rem; cursor: pointer; border-radius: 4px; border: none; background: none; color: white; text-align: left; width: 100%; display: flex; justify-content: space-between; }
+        .device-option:hover { background: #444; }
+        .active-device { color: var(--sp-green); font-weight: bold; }
+
+        /* Progress Bar */
         #progress-container { width: 100%; height: 4px; background: #4d4d4d; border-radius: 2px; }
-        #progress-bar { width: 0%; height: 100%; background: var(--text-main); border-radius: 2px; }
+        #progress-bar { width: 0%; height: 100%; background: var(--text-main); border-radius: 2px; transition: width 0.4s linear; }
 
         .bottom-row { display: flex; align-items: center; justify-content: space-between; }
         .controls { display: flex; align-items: center; gap: 15px; }
-        .btn-nav { background: none; border: none; color: var(--text-main); cursor: pointer; font-size: 1.1rem; }
-        #play-btn { background: white; color: black; border: none; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+        .btn-nav { background: none; border: none; color: var(--text-main); cursor: pointer; font-size: 1.2rem; }
+        #play-btn { background: white; color: black; border: none; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 1rem; }
         
-        #time-display { font-size: 0.7rem; color: var(--text-dim); }
-        #login-section { position: absolute; inset: 0; background: var(--bg-grey); border-radius: 12px; display: flex; align-items: center; justify-content: center; z-index: 30; }
+        #time-display { font-size: 0.75rem; color: var(--text-dim); }
+        #login-overlay { position: absolute; inset: 0; background: var(--bg-grey); border-radius: 12px; display: flex; align-items: center; justify-content: center; z-index: 200; }
     </style>
 </head>
 <body>
 
     <div id="player-container">
-        <div id="login-section" style="display:none;"><button onclick="redirectToAuth()" style="background:var(--sp-green); border:none; padding:10px 20px; border-radius:20px; font-weight:bold; cursor:pointer;">Connect</button></div>
+        <div id="login-overlay" style="display:none;"><button onclick="redirectToAuth()" style="background:var(--sp-green); border:none; padding:10px 20px; border-radius:20px; font-weight:bold; cursor:pointer;">Connect Spotify</button></div>
 
         <div class="top-row">
             <div id="album-art"></div>
             <div class="meta">
                 <p id="track-name">Paused</p>
-                <p id="artist-name">Ready to Sync</p>
+                <p id="artist-name">Ready</p>
+                <p id="context-label">My Liked Songs</p>
             </div>
-            <button id="device-btn" onclick="toggleDeviceList()">📱</button>
-            <div id="device-list"></div>
+            <button id="device-btn" onclick="toggleDevices()">📱</button>
+            <div id="device-menu"></div>
         </div>
 
         <div id="progress-container"><div id="progress-bar"></div></div>
@@ -75,7 +81,7 @@
         const redirectUri = window.location.origin + window.location.pathname;
         let player;
 
-        // PKCE Helpers
+        // PKCE Flow
         const rand = (l) => Array.from(crypto.getRandomValues(new Uint8Array(l))).map(x => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[x % 62]).join('');
         const hash = async (p) => window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(p));
         const enc = (i) => btoa(String.fromCharCode(...new Uint8Array(i))).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -99,49 +105,48 @@
                 localStorage.setItem('access_token', d.access_token);
                 window.history.replaceState({}, document.title, window.location.pathname);
             }
-            if (!localStorage.getItem('access_token')) document.getElementById('login-section').style.display = 'flex';
+            if (!localStorage.getItem('access_token')) document.getElementById('login-overlay').style.display = 'flex';
         }
 
-        // --- DEVICE LIST LOGIC ---
-        async function toggleDeviceList() {
-            const list = document.getElementById('device-list');
-            if (list.style.display === 'flex') {
-                list.style.display = 'none';
-                return;
-            }
+        // --- DEVICE MANAGEMENT ---
+        async function toggleDevices() {
+            const menu = document.getElementById('device-menu');
+            if (menu.style.display === 'flex') { menu.style.display = 'none'; return; }
+            
             const token = localStorage.getItem('access_token');
             const res = await fetch('https://api.spotify.com/v1/me/player/devices', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const data = await res.json();
-            list.innerHTML = '';
-            data.devices.forEach(device => {
-                const btn = document.createElement('button');
-                btn.className = 'device-item';
-                btn.innerText = (device.is_active ? '🟢 ' : '') + device.name;
-                btn.onclick = () => transferPlayback(device.id);
-                list.appendChild(btn);
+            
+            menu.innerHTML = '<p style="font-size:0.6rem; color:#b3b3b3; margin:5px;">SELECT DEVICE</p>';
+            data.devices.forEach(d => {
+                const item = document.createElement('button');
+                item.className = `device-option ${d.is_active ? 'active-device' : ''}`;
+                item.innerHTML = `<span>${d.name}</span> <span>${d.type === 'Computer' ? '💻' : '📱'}</span>`;
+                item.onclick = () => transferPlayback(d.id);
+                menu.appendChild(item);
             });
-            list.style.display = 'flex';
+            menu.style.display = 'flex';
         }
 
         async function transferPlayback(deviceId) {
             const token = localStorage.getItem('access_token');
             await fetch('https://api.spotify.com/v1/me/player', {
                 method: 'PUT',
-                body: JSON.stringify({ device_ids: [deviceId], play: false }), // play: false per your request
+                body: JSON.stringify({ device_ids: [deviceId], play: false }),
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
             });
-            document.getElementById('device-list').style.display = 'none';
+            document.getElementById('device-menu').style.display = 'none';
         }
 
         window.onSpotifyWebPlaybackSDKReady = () => {
             const token = localStorage.getItem('access_token');
             if (!token) return;
-            player = new Spotify.Player({ name: 'Compact Player', getOAuthToken: cb => cb(token) });
+            player = new Spotify.Player({ name: 'James Dashboard Player', getOAuthToken: cb => cb(token) });
 
             player.addListener('ready', ({ device_id }) => {
-                // Auto-transfer session but stay paused
+                // Register this dashboard as a device but don't autoplay
                 transferPlayback(device_id);
             });
 
@@ -153,11 +158,20 @@
                 document.getElementById('album-art').style.backgroundImage = `url(${track.album.images[0].url})`;
                 document.getElementById('play-btn').innerText = state.paused ? '▶' : '⏸';
                 document.getElementById('progress-bar').style.width = (state.position / state.duration) * 100 + '%';
-                const mins = Math.floor(state.position / 60000); const secs = Math.floor((state.position % 60000) / 1000);
+                const mins = Math.floor(state.position / 60000); 
+                const secs = Math.floor((state.position % 60000) / 1000);
                 document.getElementById('time-display').innerText = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
             });
             player.connect();
         };
+
+        // Close device menu on click-away
+        window.addEventListener('click', (e) => {
+            if (!e.target.closest('#device-btn') && !e.target.closest('#device-menu')) {
+                document.getElementById('device-menu').style.display = 'none';
+            }
+        });
+
         init();
     </script>
 </body>
