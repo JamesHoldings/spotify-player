@@ -78,7 +78,6 @@
             text-overflow: ellipsis;
         }
 
-        /* DEVICE PANEL: Opens BELOW widget */
         #device-btn { 
             background: rgba(255,255,255,0.1); 
             border: 1px solid var(--border); 
@@ -101,7 +100,7 @@
         }
         #device-menu { 
             position: absolute; 
-            top: 100%; /* Opens BELOW instead of above */
+            top: 100%; 
             right: 0; 
             margin-top: 8px;
             background: var(--bg-darker); 
@@ -231,7 +230,6 @@
             font-variant-numeric: tabular-nums;
         }
         
-        /* Login Overlay */
         #login-overlay { 
             position: absolute; 
             inset: 0; 
@@ -260,7 +258,6 @@
             box-shadow: 0 4px 12px rgba(29,185,84,0.4);
         }
 
-        /* Remote sync indicator */
         .sync-indicator {
             position: absolute;
             top: 12px;
@@ -279,12 +276,6 @@
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
-        }
-
-        /* Loading state */
-        .loading {
-            opacity: 0.6;
-            pointer-events: none;
         }
     </style>
 </head>
@@ -326,9 +317,8 @@
     <script>
         const clientId = 'ccb3b4e6e11b48fc9ba11bc154e65534';
         const redirectUri = window.location.origin + window.location.pathname;
-        let player;
         let syncInterval;
-        let isRemoteSync = false;
+        let currentDeviceId = null;
 
         // --- AUTH LOGIC (PKCE) ---
         const generateRandomString = (l) => Array.from(crypto.getRandomValues(new Uint8Array(l))).map(x => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[x % 62]).join('');
@@ -364,28 +354,26 @@
                     code_verifier: v 
                 }),
             });
-            return await response.json();
+            const data = await response.json();
+            if (data.access_token) {
+                localStorage.setItem('access_token', data.access_token);
+                localStorage.setItem('token_expires', Date.now() + (data.expires_in * 1000));
+            }
+            return data;
         }
 
-        // --- ROBUST SYNC FUNCTIONS ---
         async function getAccessToken() {
             let token = localStorage.getItem('access_token');
-            if (!token) return null;
+            const expires = localStorage.getItem('token_expires');
             
-            // Check if token expired (simple check)
-            const payload = JSON.parse(atob(token.split('.')[1]));
-            if (payload.exp * 1000 < Date.now()) {
-                return refreshToken();
+            if (!token || (expires && parseInt(expires) < Date.now())) {
+                document.getElementById('login-overlay').style.display = 'flex';
+                return null;
             }
             return token;
         }
 
-        async function refreshToken() {
-            // Simplified - in production you'd implement proper refresh
-            document.getElementById('login-overlay').style.display = 'flex';
-            return null;
-        }
-
+        // --- SAFE SYNC (NO SESSION STEALING) ---
         async function syncPlaybackState() {
             const token = await getAccessToken();
             if (!token) return;
@@ -396,7 +384,6 @@
                 });
                 
                 if (response.status === 204) {
-                    // No active playback
                     updateUI(null);
                     return;
                 }
@@ -404,15 +391,17 @@
                 const state = await response.json();
                 updateUI(state);
                 document.getElementById('sync-indicator').className = 'sync-indicator connected';
-                isRemoteSync = state.device?.id !== player?._options?.id;
+                
+                // Only store device ID if it's different from current web player
+                if (state.device && state.device.id !== currentDeviceId) {
+                    currentDeviceId = state.device.id;
+                }
             } catch (e) {
                 console.error('Sync failed:', e);
             }
         }
 
         function updateUI(state) {
-            const container = document.getElementById('player-container');
-            
             if (!state || state.item === null) {
                 document.getElementById('track-name').innerText = 'Nothing Playing';
                 document.getElementById('artist-name').innerText = 'No active session';
@@ -420,12 +409,9 @@
                 document.getElementById('play-btn').innerText = '▶';
                 document.getElementById('progress-bar').style.width = '0%';
                 document.getElementById('time-display').innerText = '--:--';
-                container.classList.add('loading');
                 return;
             }
 
-            container.classList.remove('loading');
-            
             const track = state.item;
             document.getElementById('track-name').innerText = track.name;
             document.getElementById('artist-name').innerText = track.artists[0]?.name || 'Unknown Artist';
@@ -440,19 +426,27 @@
             document.getElementById('time-display').innerText = `${mins}:${secs.toString().padStart(2, '0')}`;
         }
 
-        // --- CONTROL FUNCTIONS ---
-        async function transferPlayback(deviceId) {
+        // --- REMOTE CONTROL (Safe - targets active device) ---
+        async function controlPlayback(action, body = null) {
             const token = await getAccessToken();
             if (!token) return;
-            
-            await fetch('https://api.spotify.com/v1/me/player', {
-                method: 'PUT',
-                body: JSON.stringify({ device_ids: [deviceId], play: true }),
+
+            const url = `https://api.spotify.com/v1/me/player/${action}`;
+            const options = {
                 headers: { 
-                    'Content-Type': 'application/json', 
-                    'Authorization': `Bearer ${token}` 
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
                 }
-            });
+            };
+            
+            if (body) options.body = JSON.stringify(body);
+            
+            await fetch(url, options);
+            syncPlaybackState(); // Refresh UI after control
+        }
+
+        async function transferPlayback(deviceId) {
+            await controlPlayback('play', { device_ids: [deviceId], play: true });
             document.getElementById('device-menu').style.display = 'none';
         }
 
@@ -483,77 +477,65 @@
         }
 
         async function togglePlay() {
-            const token = await getAccessToken();
-            if (!token) return;
-            await fetch('https://api.spotify.com/v1/me/player/play', {
-                method: 'PUT',
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            await controlPlayback('play');
         }
 
         async function previousTrack() {
-            const token = await getAccessToken();
-            if (!token) return;
-            await fetch('https://api.spotify.com/v1/me/player/previous', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            await controlPlayback('previous');
         }
 
         async function nextTrack() {
-            const token = await getAccessToken();
-            if (!token) return;
-            await fetch('https://api.spotify.com/v1/me/player/next', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            await controlPlayback('next');
         }
 
         function seekProgress(event) {
             const rect = event.currentTarget.getBoundingClientRect();
             const pos = (event.clientX - rect.left) / rect.width;
-            const duration = 30000; // Seek 30s ahead/back
-            const seekTime = Math.round(pos * duration * 1000);
-            
-            fetch('https://api.spotify.com/v1/me/player/seek?position=' + seekTime, {
-                method: 'PUT',
-                headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
-            });
+            const duration = 30000; // 30s scrub
+            controlPlayback(`seek?position_ms=${Math.round(pos * duration * 1000)}`);
         }
 
-        // --- INIT & SYNC ---
+        // --- INIT (Safe on refresh) ---
         async function init() {
+            // Handle OAuth callback FIRST (only if code present)
             const urlParams = new URLSearchParams(window.location.search);
             const code = urlParams.get('code');
             if (code) {
                 const data = await getToken(code);
-                localStorage.setItem('access_token', data.access_token);
-                window.history.replaceState({}, document.title, window.location.pathname);
+                if (data.access_token) {
+                    window.history.replaceState({}, document.title, window.location.pathname);
+                }
             }
             
-            if (!localStorage.getItem('access_token')) {
+            // Check if we have valid token BEFORE showing anything
+            if (!(await getAccessToken())) {
                 document.getElementById('login-overlay').style.display = 'flex';
                 return;
             }
 
-            // Start robust sync polling
+            // Safe sync polling - NO automatic session transfer
             syncPlaybackState();
-            syncInterval = setInterval(syncPlaybackState, 2000); // Sync every 2s
+            syncInterval = setInterval(syncPlaybackState, 2000);
         }
 
+        // Web Playback SDK (optional - for local playback only)
         window.onSpotifyWebPlaybackSDKReady = () => {
             const token = localStorage.getItem('access_token');
             if (!token) return;
 
-            player = new Spotify.Player({ 
-                name: 'Compact Pro Dashboard', 
-                getOAuthToken: cb => cb(token) 
+            const player = new Spotify.Player({ 
+                name: 'Compact Pro (Remote)', 
+                getOAuthToken: cb => cb(token),
+                volume: 0.5 // Silent by default
             });
 
             player.addListener('ready', ({ device_id }) => {
-                console.log('Web player ready');
+                currentDeviceId = device_id;
+                console.log('Web player ready (silent monitoring)');
             });
 
             player.addListener('player_state_changed', (state) => {
-                if (state) updateUI(state);
+                if (state) syncPlaybackState();
             });
 
             player.connect();
@@ -563,6 +545,7 @@
             if (syncInterval) clearInterval(syncInterval);
         });
 
+        // Start safe monitoring
         init();
     </script>
 </body>
