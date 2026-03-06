@@ -3,728 +3,176 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spotify Pro • fixed device control</title>
+    <title>Spotify Compact Pro</title>
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
+        :root { --sp-green: #1DB954; --bg-grey: #282828; --text-main: #ffffff; --text-dim: #b3b3b3; }
+        body { background: transparent; color: var(--text-main); font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; align-items: center; justify-content: center; height: 100vh; overflow: hidden; }
+        
+        #player-container { 
+            background: var(--bg-grey); width: 360px; padding: 15px; border-radius: 12px; 
+            display: flex; flex-direction: column; gap: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); position: relative;
         }
 
-        :root {
-            --sp-green: #1DB954;
-            --bg-card: #1a1a1a;
-            --text-main: #ffffff;
-            --text-dim: #b3b3b3;
-            --cover-size: 56px;
-        }
+        .top-row { display: flex; gap: 12px; align-items: center; position: relative; }
+        #album-art { width: 64px; height: 64px; border-radius: 4px; background-size: cover; background-color: #121212; flex-shrink: 0; }
+        
+        .meta { flex-grow: 1; overflow: hidden; }
+        #track-name { font-size: 0.9rem; font-weight: bold; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        #artist-name { font-size: 0.8rem; color: var(--text-dim); margin: 2px 0 0 0; }
+        #context-label { font-size: 0.7rem; color: var(--text-dim); margin-top: 4px; }
 
-        body {
-            background: transparent;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            overflow: hidden;
-            color: var(--text-main);
+        /* Device Selection UI */
+        #device-btn { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 1.2rem; transition: 0.2s; }
+        #device-btn:hover { color: var(--sp-green); }
+        
+        #device-menu { 
+            position: absolute; top: 100%; right: 0; background: #333; border-radius: 8px; 
+            width: 180px; display: none; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.5); z-index: 100; padding: 8px;
+            margin-top: 5px; border: 1px solid #444;
         }
+        .device-option { padding: 10px; font-size: 0.8rem; cursor: pointer; border-radius: 4px; border: none; background: none; color: white; text-align: left; width: 100%; display: flex; justify-content: space-between; }
+        .device-option:hover { background: #444; }
+        .active-device { color: var(--sp-green); font-weight: bold; }
 
-        #player-container {
-            background: #191919;
-            width: 340px;
-            padding: 16px;
-            border-radius: 28px;
-            border: 1px solid #2a2a2a;
-            box-shadow: 0 25px 50px -8px black;
-            backdrop-filter: blur(2px);
-            display: flex;
-            flex-direction: column;
-            gap: 14px;
-        }
+        /* Progress Bar */
+        #progress-container { width: 100%; height: 4px; background: #4d4d4d; border-radius: 2px; }
+        #progress-bar { width: 0%; height: 100%; background: var(--text-main); border-radius: 2px; transition: width 0.4s linear; }
 
-        /* top row */
-        .top-row {
-            display: flex;
-            gap: 12px;
-            align-items: center;
-            position: relative;
-        }
-
-        #album-art {
-            width: var(--cover-size);
-            height: var(--cover-size);
-            border-radius: 10px;
-            background: #222;
-            background-size: cover;
-            background-position: center;
-            box-shadow: 0 8px 16px rgba(0,0,0,0.6);
-            flex-shrink: 0;
-        }
-
-        .meta {
-            flex: 1;
-            min-width: 0;
-        }
-
-        #track-name {
-            font-weight: 600;
-            font-size: 0.95rem;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            margin-bottom: 4px;
-        }
-
-        #artist-name {
-            font-size: 0.75rem;
-            color: var(--text-dim);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        /* device button */
-        #device-btn {
-            background: rgba(255,255,255,0.05);
-            border: none;
-            color: #ccc;
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            font-size: 1.3rem;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: 0.15s;
-            flex-shrink: 0;
-        }
-        #device-btn:hover {
-            background: rgba(255,255,255,0.15);
-            color: white;
-            transform: scale(1.03);
-        }
-
-        /* device menu – compact height */
-        #device-menu {
-            position: absolute;
-            bottom: 42px;
-            right: -2px;
-            width: 240px;
-            background: #1e1e1e;
-            border: 1px solid #3b3b3b;
-            border-radius: 20px;
-            padding: 6px 0;
-            display: none;
-            flex-direction: column;
-            box-shadow: 0 15px 30px rgba(0,0,0,0.8);
-            z-index: 200;
-            max-height: 120px;
-            overflow-y: auto;
-            backdrop-filter: blur(12px);
-            background: rgba(25,25,25,0.98);
-        }
-
-        #device-menu::-webkit-scrollbar {
-            width: 4px;
-        }
-        #device-menu::-webkit-scrollbar-thumb {
-            background: #4f4f4f;
-            border-radius: 20px;
-        }
-
-        .device-option {
-            padding: 10px 16px;
-            font-size: 0.8rem;
-            background: transparent;
-            border: none;
-            color: #e0e0e0;
-            width: 100%;
-            text-align: left;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            cursor: pointer;
-            border-left: 3px solid transparent;
-            transition: 0.1s;
-        }
-        .device-option:hover {
-            background: #2d2d2d;
-            border-left-color: var(--sp-green);
-        }
-        .active-device {
-            color: var(--sp-green);
-            font-weight: 600;
-            background: rgba(29,185,84,0.1);
-        }
-
-        /* progress */
-        #progress-container {
-            width: 100%;
-            height: 5px;
-            background: #3a3a3a;
-            border-radius: 10px;
-            cursor: pointer;
-        }
-        #progress-bar {
-            width: 0%;
-            height: 100%;
-            background: white;
-            border-radius: 10px;
-            transition: width 0.1s;
-        }
-
-        /* bottom row */
-        .bottom-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .controls {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .btn-nav {
-            background: none;
-            border: none;
-            color: #e0e0e0;
-            font-size: 1.4rem;
-            cursor: pointer;
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: 0.1s;
-        }
-        .btn-nav:hover {
-            background: rgba(255,255,255,0.08);
-            color: white;
-        }
-
-        #play-btn {
-            background: white;
-            color: black;
-            width: 42px;
-            height: 42px;
-            border-radius: 50%;
-            border: none;
-            font-size: 1.2rem;
-            cursor: pointer;
-            box-shadow: 0 6px 14px rgba(0,0,0,0.5);
-            transition: 0.15s;
-        }
-        #play-btn:hover {
-            transform: scale(1.07);
-        }
-
-        #time-display {
-            font-size: 0.7rem;
-            background: rgba(0,0,0,0.5);
-            padding: 4px 10px;
-            border-radius: 30px;
-            border: 1px solid #333;
-            font-variant-numeric: tabular-nums;
-            color: #ccc;
-        }
-
-        /* active device indicator */
-        #active-device-indicator {
-            font-size: 0.65rem;
-            color: #1DB954;
-            margin-top: 2px;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            max-width: 160px;
-        }
-        .dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #1DB954;
-            display: inline-block;
-            box-shadow: 0 0 6px #1DB954;
-        }
-
-        .error-message {
-            color: #f15e6c;
-            font-size: 0.7rem;
-            padding: 8px;
-            text-align: center;
-        }
-
-        #token-status {
-            font-size: 0.65rem;
-            color: #f15e6c;
-            margin-top: 4px;
-            cursor: pointer;
-            text-decoration: underline;
-        }
-        #token-status.valid {
-            color: #1DB954;
-        }
+        .bottom-row { display: flex; align-items: center; justify-content: space-between; }
+        .controls { display: flex; align-items: center; gap: 15px; }
+        .btn-nav { background: none; border: none; color: var(--text-main); cursor: pointer; font-size: 1.2rem; }
+        #play-btn { background: white; color: black; border: none; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 1rem; }
+        
+        #time-display { font-size: 0.75rem; color: var(--text-dim); }
+        #login-overlay { position: absolute; inset: 0; background: var(--bg-grey); border-radius: 12px; display: flex; align-items: center; justify-content: center; z-index: 200; }
     </style>
 </head>
 <body>
+
     <div id="player-container">
+        <div id="login-overlay" style="display:none;"><button onclick="redirectToAuth()" style="background:var(--sp-green); border:none; padding:10px 20px; border-radius:20px; font-weight:bold; cursor:pointer;">Connect Spotify</button></div>
+
         <div class="top-row">
             <div id="album-art"></div>
             <div class="meta">
-                <p id="track-name">Spotify</p>
-                <p id="artist-name">widget ready</p>
-                <div id="active-device-indicator"><span class="dot"></span> <span id="active-device-name">no device</span></div>
-                <div id="token-status">checking token...</div>
+                <p id="track-name">Paused</p>
+                <p id="artist-name">Ready</p>
+                <p id="context-label">My Liked Songs</p>
             </div>
-            <button id="device-btn" onclick="toggleDevices()">🔊</button>
+            <button id="device-btn" onclick="toggleDevices()">📱</button>
             <div id="device-menu"></div>
         </div>
 
-        <div id="progress-container" onclick="seekFromProgress(event)">
-            <div id="progress-bar"></div>
-        </div>
+        <div id="progress-container"><div id="progress-bar"></div></div>
 
         <div class="bottom-row">
             <div class="controls">
-                <button class="btn-nav" onclick="handlePrev()" title="Previous">⏮</button>
-                <button class="btn-nav" onclick="handleNext()" title="Next">⏭</button>
-                <span id="time-display">0:00</span>
+                <button class="btn-nav" onclick="player.previousTrack()">⏮</button>
+                <button class="btn-nav" onclick="player.nextTrack()">⏭</button>
+                <div id="time-display">0:00</div>
             </div>
-            <button id="play-btn" onclick="handlePlayPause()" title="Play/Pause">▶</button>
+            <button id="play-btn" onclick="player.togglePlay()">▶</button>
         </div>
     </div>
 
     <script src="https://sdk.scdn.co/spotify-player.js"></script>
     <script>
-        (function() {
-            // --------------------------------------------------------------
-            // HARDCODED CLIENT ID - reliable, not from storage
-            const CLIENT_ID = 'ccb3b4e6e11b48fc9ba11bc154e65534';
-            
-            // Token management - try multiple sources
-            let accessToken = null;
-            
-            // Try to get token from various sources
-            function getAccessToken() {
-                // 1. Try URL hash (most common for OAuth redirects)
-                const hashParams = new URLSearchParams(window.location.hash.substring(1));
-                const hashToken = hashParams.get('access_token');
-                if (hashToken) {
-                    localStorage.setItem('spotify_token', hashToken);
-                    // Clean URL
-                    window.location.hash = '';
-                    return hashToken;
-                }
-                
-                // 2. Try localStorage
-                const storedToken = localStorage.getItem('spotify_token');
-                if (storedToken) {
-                    return storedToken;
-                }
-                
-                // 3. Try sessionStorage as fallback
-                const sessionToken = sessionStorage.getItem('spotify_token');
-                if (sessionToken) {
-                    localStorage.setItem('spotify_token', sessionToken);
-                    return sessionToken;
-                }
-                
-                return null;
-            }
-            
-            accessToken = getAccessToken();
-            
-            // Update token status UI
-            const tokenStatusEl = document.getElementById('token-status');
-            if (accessToken) {
-                tokenStatusEl.textContent = '✓ token valid';
-                tokenStatusEl.className = 'valid';
-            } else {
-                tokenStatusEl.textContent = '✗ need login - click here';
-                tokenStatusEl.className = '';
-                tokenStatusEl.onclick = () => {
-                    const redirectUri = encodeURIComponent(window.location.href);
-                    const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${redirectUri}&scope=streaming%20user-read-email%20user-read-private%20user-library-read%20user-library-modify%20user-read-playback-state%20user-modify-playback-state%20user-read-currently-playing%20app-remote-control%20playlist-read-private%20playlist-read-collaborative`;
-                    window.location.href = authUrl;
-                };
-            }
+        const clientId = 'ccb3b4e6e11b48fc9ba11bc154e65534';
+        const redirectUri = window.location.origin + window.location.pathname;
+        let player;
 
-            // Core state
-            let player = null;
-            window.player = null;
-            let lastState = null;
-            let currentSdkDeviceId = null;
+        // PKCE Flow
+        const rand = (l) => Array.from(crypto.getRandomValues(new Uint8Array(l))).map(x => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[x % 62]).join('');
+        const hash = async (p) => window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(p));
+        const enc = (i) => btoa(String.fromCharCode(...new Uint8Array(i))).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 
-            // UI elements
-            const trackEl = document.getElementById('track-name');
-            const artistEl = document.getElementById('artist-name');
-            const albumEl = document.getElementById('album-art');
-            const playBtn = document.getElementById('play-btn');
-            const progressBar = document.getElementById('progress-bar');
-            const timeEl = document.getElementById('time-display');
-            const activeDeviceNameEl = document.getElementById('active-device-name');
-            const deviceMenu = document.getElementById('device-menu');
-            const deviceBtn = document.getElementById('device-btn');
+        async function redirectToAuth() {
+            const v = rand(64); const c = enc(await hash(v));
+            localStorage.setItem('code_verifier', v);
+            const p = new URLSearchParams({ response_type: 'code', client_id: clientId, scope: 'streaming user-read-playback-state user-modify-playback-state', code_challenge_method: 'S256', code_challenge: c, redirect_uri: redirectUri });
+            window.location.href = `https://accounts.spotify.com/authorize?${p.toString()}`;
+        }
 
-            // ---------- HELPER: Spotify API fetch with better error handling ----------
-            async function spotifyFetch(endpoint, method = 'GET', body = null, queryParams = null) {
-                if (!accessToken) {
-                    console.error('No access token');
-                    return { ok: false, status: 401 };
-                }
-
-                let url = `https://api.spotify.com/v1/${endpoint}`;
-                
-                // Add query parameters if provided
-                if (queryParams) {
-                    const params = new URLSearchParams(queryParams);
-                    url += `?${params.toString()}`;
-                }
-
-                const options = {
-                    method,
-                    headers: {
-                        'Authorization': `Bearer ${accessToken}`,
-                        'Content-Type': 'application/json'
-                    }
-                };
-
-                if (body) {
-                    options.body = JSON.stringify(body);
-                }
-
-                try {
-                    const res = await fetch(url, options);
-                    if (res.status === 401) {
-                        console.error('Token expired');
-                        tokenStatusEl.textContent = '✗ token expired - click to refresh';
-                        tokenStatusEl.className = '';
-                        // Clear invalid token
-                        localStorage.removeItem('spotify_token');
-                        sessionStorage.removeItem('spotify_token');
-                    }
-                    return res;
-                } catch (error) {
-                    console.error('Fetch error:', error);
-                    return { ok: false, status: 0 };
-                }
-            }
-
-            // ---------- DEVICE MANAGEMENT (FIXED) ----------
-            async function getAvailableDevices() {
-                try {
-                    const res = await spotifyFetch('me/player/devices');
-                    if (!res.ok) {
-                        console.error('Failed to fetch devices:', res.status);
-                        return [];
-                    }
-                    const data = await res.json();
-                    return data.devices || [];
-                } catch (error) {
-                    console.error('Error fetching devices:', error);
-                    return [];
-                }
-            }
-
-            async function transferPlayback(deviceId) {
-                try {
-                    // First, try to transfer playback
-                    const res = await spotifyFetch('me/player', 'PUT', {
-                        device_ids: [deviceId],
-                        play: true
-                    });
-                    
-                    if (res.ok || res.status === 204) {
-                        console.log('Transfer successful to device:', deviceId);
-                        
-                        // Update the active device name
-                        const devices = await getAvailableDevices();
-                        const transferredDevice = devices.find(d => d.id === deviceId);
-                        if (transferredDevice) {
-                            activeDeviceNameEl.innerText = transferredDevice.name;
-                        }
-                        
-                        // Wait a moment for the transfer to complete, then refresh state
-                        setTimeout(() => {
-                            refreshPlaybackState();
-                        }, 500);
-                        
-                        return true;
-                    } else {
-                        console.error('Transfer failed:', res.status);
-                        return false;
-                    }
-                } catch (error) {
-                    console.error('Transfer error:', error);
-                    return false;
-                }
-            }
-
-            // ---------- DEVICE MENU POPULATION (FIXED) ----------
-            async function populateDeviceMenu() {
-                if (!accessToken) {
-                    deviceMenu.innerHTML = '<div class="device-option error-message">No access token</div>';
-                    return;
-                }
-
-                const devices = await getAvailableDevices();
-                
-                if (!devices || devices.length === 0) {
-                    deviceMenu.innerHTML = '<div class="device-option" style="cursor:default; color:#999;">📡 No devices available</div>' +
-                                          '<div class="device-option" style="cursor:default; font-size:0.7rem; color:#666;">Open Spotify on any device</div>';
-                    return;
-                }
-
-                deviceMenu.innerHTML = '';
-                
-                devices.forEach(device => {
-                    const item = document.createElement('button');
-                    const isActive = device.is_active;
-                    
-                    item.className = `device-option ${isActive ? 'active-device' : ''}`;
-                    
-                    // Choose icon based on device type
-                    let icon = '🔹';
-                    const type = device.type?.toLowerCase() || '';
-                    if (type.includes('computer')) icon = '💻';
-                    else if (type.includes('smartphone') || type.includes('phone')) icon = '📱';
-                    else if (type.includes('speaker')) icon = '🔊';
-                    else if (type.includes('tv')) icon = '📺';
-                    else if (type.includes('tablet')) icon = '📱';
-                    else if (type.includes('audio')) icon = '🎧';
-
-                    item.innerHTML = `<span>${icon} ${device.name}</span> 
-                                    <span>${isActive ? '●' : ''}</span>`;
-                    
-                    item.onclick = async (e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        
-                        // Show feedback
-                        item.style.opacity = '0.7';
-                        
-                        const success = await transferPlayback(device.id);
-                        
-                        if (success) {
-                            deviceMenu.style.display = 'none';
-                        } else {
-                            // Show error briefly
-                            const originalText = item.innerHTML;
-                            item.innerHTML = '<span>⚠️ Transfer failed</span>';
-                            item.style.opacity = '1';
-                            setTimeout(() => {
-                                item.innerHTML = originalText;
-                            }, 1500);
-                        }
-                    };
-                    
-                    deviceMenu.appendChild(item);
+        async function init() {
+            const code = new URLSearchParams(window.location.search).get('code');
+            if (code) {
+                const v = localStorage.getItem('code_verifier');
+                const r = await fetch('https://accounts.spotify.com/api/token', {
+                    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({ client_id: clientId, grant_type: 'authorization_code', code, redirect_uri: redirectUri, code_verifier: v })
                 });
+                const d = await r.json();
+                localStorage.setItem('access_token', d.access_token);
+                window.history.replaceState({}, document.title, window.location.pathname);
             }
+            if (!localStorage.getItem('access_token')) document.getElementById('login-overlay').style.display = 'flex';
+        }
 
-            window.toggleDevices = async () => {
-                if (deviceMenu.style.display === 'flex') {
-                    deviceMenu.style.display = 'none';
-                    return;
-                }
-                
-                // Show loading state
-                deviceMenu.innerHTML = '<div class="device-option" style="justify-content:center;">Loading devices...</div>';
-                deviceMenu.style.display = 'flex';
-                
-                await populateDeviceMenu();
-            };
+        // --- DEVICE MANAGEMENT ---
+        async function toggleDevices() {
+            const menu = document.getElementById('device-menu');
+            if (menu.style.display === 'flex') { menu.style.display = 'none'; return; }
+            
+            const token = localStorage.getItem('access_token');
+            const res = await fetch('https://api.spotify.com/v1/me/player/devices', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await res.json();
+            
+            menu.innerHTML = '<p style="font-size:0.6rem; color:#b3b3b3; margin:5px;">SELECT DEVICE</p>';
+            data.devices.forEach(d => {
+                const item = document.createElement('button');
+                item.className = `device-option ${d.is_active ? 'active-device' : ''}`;
+                item.innerHTML = `<span>${d.name}</span> <span>${d.type === 'Computer' ? '💻' : '📱'}</span>`;
+                item.onclick = () => transferPlayback(d.id);
+                menu.appendChild(item);
+            });
+            menu.style.display = 'flex';
+        }
 
-            // Close menu on outside click
-            document.addEventListener('click', (e) => {
-                if (deviceMenu.style.display === 'flex' && 
-                    !deviceMenu.contains(e.target) && 
-                    e.target !== deviceBtn) {
-                    deviceMenu.style.display = 'none';
-                }
+        async function transferPlayback(deviceId) {
+            const token = localStorage.getItem('access_token');
+            await fetch('https://api.spotify.com/v1/me/player', {
+                method: 'PUT',
+                body: JSON.stringify({ device_ids: [deviceId], play: false }),
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+            });
+            document.getElementById('device-menu').style.display = 'none';
+        }
+
+        window.onSpotifyWebPlaybackSDKReady = () => {
+            const token = localStorage.getItem('access_token');
+            if (!token) return;
+            player = new Spotify.Player({ name: 'James Dashboard Player', getOAuthToken: cb => cb(token) });
+
+            player.addListener('ready', ({ device_id }) => {
+                // Register this dashboard as a device but don't autoplay
+                transferPlayback(device_id);
             });
 
-            // ---------- PLAYBACK CONTROL (REST API) ----------
-            window.handlePlayPause = async () => {
-                try {
-                    const res = await spotifyFetch('me/player');
-                    if (res.status === 204 || !res.ok) {
-                        // No active device - try to use SDK if available
-                        if (player) {
-                            player.togglePlay();
-                        }
-                        return;
-                    }
-                    
-                    const data = await res.json();
-                    if (data.is_playing) {
-                        await spotifyFetch('me/player/pause', 'PUT');
-                    } else {
-                        await spotifyFetch('me/player/play', 'PUT');
-                    }
-                    
-                    // Refresh state after action
-                    setTimeout(refreshPlaybackState, 200);
-                } catch (error) {
-                    console.error('Play/pause error:', error);
-                    if (player) player.togglePlay();
-                }
-            };
+            player.addListener('player_state_changed', state => {
+                if (!state) return;
+                const track = state.track_window.current_track;
+                document.getElementById('track-name').innerText = track.name;
+                document.getElementById('artist-name').innerText = track.artists[0].name;
+                document.getElementById('album-art').style.backgroundImage = `url(${track.album.images[0].url})`;
+                document.getElementById('play-btn').innerText = state.paused ? '▶' : '⏸';
+                document.getElementById('progress-bar').style.width = (state.position / state.duration) * 100 + '%';
+                const mins = Math.floor(state.position / 60000); 
+                const secs = Math.floor((state.position % 60000) / 1000);
+                document.getElementById('time-display').innerText = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+            });
+            player.connect();
+        };
 
-            window.handleNext = async () => {
-                await spotifyFetch('me/player/next', 'POST');
-                setTimeout(refreshPlaybackState, 300);
-            };
-
-            window.handlePrev = async () => {
-                await spotifyFetch('me/player/previous', 'POST');
-                setTimeout(refreshPlaybackState, 300);
-            };
-
-            window.seekFromProgress = async (event) => {
-                const container = document.getElementById('progress-container');
-                const rect = container.getBoundingClientRect();
-                const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-                
-                try {
-                    // Get current playback state to know duration
-                    const res = await spotifyFetch('me/player');
-                    if (res.ok) {
-                        const data = await res.json();
-                        if (data.item && data.item.duration_ms) {
-                            const positionMs = Math.floor(ratio * data.item.duration_ms);
-                            await spotifyFetch(`me/player/seek?position_ms=${positionMs}`, 'PUT');
-                            setTimeout(refreshPlaybackState, 200);
-                        }
-                    }
-                } catch (error) {
-                    console.error('Seek error:', error);
-                }
-            };
-
-            // ---------- REFRESH PLAYBACK STATE (REST API) ----------
-            async function refreshPlaybackState() {
-                if (!accessToken) return;
-                
-                try {
-                    const res = await spotifyFetch('me/player');
-                    
-                    if (res.status === 204 || !res.ok) {
-                        // No active playback
-                        trackEl.innerText = 'No active device';
-                        artistEl.innerText = 'Open Spotify and play something';
-                        albumEl.style.backgroundImage = '';
-                        playBtn.innerText = '▶';
-                        progressBar.style.width = '0%';
-                        timeEl.innerText = '0:00';
-                        activeDeviceNameEl.innerText = 'none';
-                        return;
-                    }
-                    
-                    const state = await res.json();
-                    
-                    // Update track info
-                    if (state.item) {
-                        trackEl.innerText = state.item.name;
-                        artistEl.innerText = state.item.artists.map(a => a.name).join(', ');
-                        
-                        if (state.item.album?.images?.[0]?.url) {
-                            albumEl.style.backgroundImage = `url(${state.item.album.images[0].url})`;
-                        }
-                    }
-                    
-                    // Update play button
-                    playBtn.innerText = state.is_playing ? '⏸' : '▶';
-                    
-                    // Update progress
-                    if (state.item?.duration_ms) {
-                        const pos = state.progress_ms || 0;
-                        const dur = state.item.duration_ms;
-                        const percent = (pos / dur) * 100;
-                        progressBar.style.width = percent + '%';
-                        
-                        const posMin = Math.floor(pos / 60000);
-                        const posSec = Math.floor((pos % 60000) / 1000);
-                        const durMin = Math.floor(dur / 60000);
-                        const durSec = Math.floor((dur % 60000) / 1000);
-                        timeEl.innerText = `${posMin}:${posSec.toString().padStart(2,'0')} / ${durMin}:${durSec.toString().padStart(2,'0')}`;
-                    }
-                    
-                    // Update active device name
-                    if (state.device) {
-                        activeDeviceNameEl.innerText = state.device.name;
-                    }
-                    
-                } catch (error) {
-                    console.error('Refresh error:', error);
-                }
+        // Close device menu on click-away
+        window.addEventListener('click', (e) => {
+            if (!e.target.closest('#device-btn') && !e.target.closest('#device-menu')) {
+                document.getElementById('device-menu').style.display = 'none';
             }
+        });
 
-            // ---------- SPOTIFY SDK (for events, but REST for control) ----------
-            window.onSpotifyWebPlaybackSDKReady = () => {
-                if (!accessToken) return;
-
-                const sdkPlayer = new Spotify.Player({
-                    name: 'Compact Controller',
-                    getOAuthToken: cb => cb(accessToken),
-                    volume: 0.8
-                });
-
-                sdkPlayer.addListener('ready', ({ device_id }) => {
-                    console.log('SDK ready, id =', device_id);
-                    currentSdkDeviceId = device_id;
-                    refreshPlaybackState();
-                });
-
-                sdkPlayer.addListener('player_state_changed', state => {
-                    if (state) {
-                        lastState = state;
-                        // Use SDK for instant UI updates
-                        const track = state.track_window.current_track;
-                        if (track) {
-                            trackEl.innerText = track.name;
-                            artistEl.innerText = track.artists.map(a => a.name).join(', ');
-                            if (track.album.images[0]) {
-                                albumEl.style.backgroundImage = `url(${track.album.images[0].url})`;
-                            }
-                        }
-                        playBtn.innerText = state.paused ? '▶' : '⏸';
-                        
-                        if (state.duration > 0) {
-                            const percent = (state.position / state.duration) * 100;
-                            progressBar.style.width = percent + '%';
-                            
-                            const posMin = Math.floor(state.position / 60000);
-                            const posSec = Math.floor((state.position % 60000) / 1000);
-                            const durMin = Math.floor(state.duration / 60000);
-                            const durSec = Math.floor((state.duration % 60000) / 1000);
-                            timeEl.innerText = `${posMin}:${posSec.toString().padStart(2,'0')} / ${durMin}:${durSec.toString().padStart(2,'0')}`;
-                        }
-                    }
-                });
-
-                sdkPlayer.addListener('authentication_error', ({ message }) => {
-                    console.error('SDK auth error:', message);
-                });
-
-                sdkPlayer.connect();
-                window.player = sdkPlayer;
-            };
-
-            // Poll for updates (every 3 seconds)
-            if (accessToken) {
-                refreshPlaybackState();
-                setInterval(refreshPlaybackState, 3000);
-            }
-        })();
+        init();
     </script>
 </body>
 </html>
