@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spotify Pro • full two‑way control</title>
+    <title>Spotify Pro • fixed device control</title>
     <style>
         * {
             box-sizing: border-box;
@@ -106,7 +106,7 @@
             transform: scale(1.03);
         }
 
-        /* device menu – compact ~25% height (92px) */
+        /* device menu – compact height */
         #device-menu {
             position: absolute;
             bottom: 42px;
@@ -120,7 +120,7 @@
             flex-direction: column;
             box-shadow: 0 15px 30px rgba(0,0,0,0.8);
             z-index: 200;
-            max-height: 92px;
+            max-height: 120px;
             overflow-y: auto;
             backdrop-filter: blur(12px);
             background: rgba(25,25,25,0.98);
@@ -135,8 +135,8 @@
         }
 
         .device-option {
-            padding: 8px 16px;
-            font-size: 0.75rem;
+            padding: 10px 16px;
+            font-size: 0.8rem;
             background: transparent;
             border: none;
             color: #e0e0e0;
@@ -233,7 +233,7 @@
             color: #ccc;
         }
 
-        /* active device snackbar / status */
+        /* active device indicator */
         #active-device-indicator {
             font-size: 0.65rem;
             color: #1DB954;
@@ -253,6 +253,13 @@
             background: #1DB954;
             display: inline-block;
             box-shadow: 0 0 6px #1DB954;
+        }
+
+        .error-message {
+            color: #f15e6c;
+            font-size: 0.7rem;
+            padding: 8px;
+            text-align: center;
         }
     </style>
 </head>
@@ -287,7 +294,7 @@
     <script>
         (function() {
             // --------------------------------------------------------------
-            // TOKEN – stored in localStorage (set by your auth flow)
+            // TOKEN – stored in localStorage
             const accessToken = localStorage.getItem('access_token');
             if (!accessToken) {
                 document.getElementById('track-name').innerText = '⚠️ token missing';
@@ -296,14 +303,11 @@
 
             // Core state
             let player = null;
-            window.player = null;          // for onclick hooks
-
-            let currentDeviceId = null;     // SDK device id
-            let activeDeviceName = 'unknown';
-            let positionPollInterval = null;
+            window.player = null;
             let lastState = null;
+            let currentSdkDeviceId = null;
 
-            // UI components
+            // UI elements
             const trackEl = document.getElementById('track-name');
             const artistEl = document.getElementById('artist-name');
             const albumEl = document.getElementById('album-art');
@@ -314,195 +318,151 @@
             const deviceMenu = document.getElementById('device-menu');
             const deviceBtn = document.getElementById('device-btn');
 
-            // ---------- HELPER: call Spotify Web API ----------
-            async function spotifyFetch(endpoint, method = 'GET', body = null) {
-                const res = await fetch(`https://api.spotify.com/v1/${endpoint}`, {
+            // ---------- HELPER: Spotify API fetch with better error handling ----------
+            async function spotifyFetch(endpoint, method = 'GET', body = null, queryParams = null) {
+                let url = `https://api.spotify.com/v1/${endpoint}`;
+                
+                // Add query parameters if provided
+                if (queryParams) {
+                    const params = new URLSearchParams(queryParams);
+                    url += `?${params.toString()}`;
+                }
+
+                const options = {
                     method,
                     headers: {
                         'Authorization': `Bearer ${accessToken}`,
                         'Content-Type': 'application/json'
-                    },
-                    body: body ? JSON.stringify(body) : null
-                });
-                if (!res.ok && res.status !== 204) console.warn('API warn:', res.status);
-                return res;
-            }
+                    }
+                };
 
-            // ---------- two‑way control: play/pause, next, prev ----------
-            // these functions use the REST API so they control ANY active device
-            window.handlePlayPause = async () => {
-                if (!accessToken) return;
-                // get current playback state to know if paused or playing
-                try {
-                    const res = await spotifyFetch('me/player');
-                    if (res.status === 204 || !res.ok) {
-                        // no active device – maybe try to use SDK as fallback?
-                        if (player) player.togglePlay();
-                        return;
-                    }
-                    const data = await res.json();
-                    if (data.is_playing) {
-                        await spotifyFetch('me/player/pause', 'PUT');
-                    } else {
-                        await spotifyFetch('me/player/play', 'PUT');
-                    }
-                    // small delay then pull fresh state
-                    setTimeout(refreshPlaybackState, 150);
-                } catch (e) {
-                    console.warn('fallback to sdk');
-                    if (player) player.togglePlay();
+                if (body) {
+                    options.body = JSON.stringify(body);
                 }
-            };
 
-            window.handleNext = async () => {
-                await spotifyFetch('me/player/next', 'POST');
-                setTimeout(refreshPlaybackState, 150);
-            };
-
-            window.handlePrev = async () => {
-                await spotifyFetch('me/player/previous', 'POST');
-                setTimeout(refreshPlaybackState, 150);
-            };
-
-            // seek from progress bar
-            window.seekFromProgress = async (event) => {
-                const container = document.getElementById('progress-container');
-                const rect = container.getBoundingClientRect();
-                const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-                
-                // get current track duration from lastState or from API
-                if (lastState && lastState.duration) {
-                    const positionMs = Math.floor(ratio * lastState.duration);
-                    await spotifyFetch('me/player/seek', 'PUT', null, { position_ms: positionMs });
-                    setTimeout(refreshPlaybackState, 100);
-                } else {
-                    // fallback: fetch context first
-                    const res = await spotifyFetch('me/player');
-                    if (res.ok) {
-                        const data = await res.json();
-                        if (data.item) {
-                            const pos = Math.floor(ratio * data.item.duration_ms);
-                            await spotifyFetch(`me/player/seek?position_ms=${pos}`, 'PUT');
-                            setTimeout(refreshPlaybackState, 100);
-                        }
-                    }
-                }
-            };
-
-            // ---------- refresh UI from REST API (full sync) ----------
-            async function refreshPlaybackState() {
-                if (!accessToken) return;
                 try {
-                    const res = await spotifyFetch('me/player');
-                    if (res.status === 204 || !res.ok) {
-                        // no active device or no playback
-                        trackEl.innerText = 'No active device';
-                        artistEl.innerText = 'start playback';
-                        albumEl.style.backgroundImage = '';
-                        playBtn.innerText = '▶';
-                        progressBar.style.width = '0%';
-                        timeEl.innerText = '0:00';
-                        activeDeviceNameEl.innerText = 'disconnected';
-                        return;
+                    const res = await fetch(url, options);
+                    if (res.status === 401) {
+                        console.error('Token expired');
+                        trackEl.innerText = '⚠️ token expired';
                     }
-                    const state = await res.json();
-                    
-                    // TRACK info
-                    if (state.item) {
-                        trackEl.innerText = state.item.name;
-                        artistEl.innerText = state.item.artists.map(a => a.name).join(', ');
-                        if (state.item.album.images && state.item.album.images[0]) {
-                            albumEl.style.backgroundImage = `url(${state.item.album.images[0].url})`;
-                        }
-                    } else {
-                        trackEl.innerText = 'No track';
-                        artistEl.innerText = '';
-                    }
-
-                    // play button
-                    playBtn.innerText = state.is_playing ? '⏸' : '▶';
-
-                    // progress & time
-                    if (state.item && state.item.duration_ms) {
-                        const pos = state.progress_ms || 0;
-                        const dur = state.item.duration_ms;
-                        const percent = (pos / dur) * 100;
-                        progressBar.style.width = percent + '%';
-
-                        const posMin = Math.floor(pos / 60000);
-                        const posSec = Math.floor((pos % 60000) / 1000);
-                        const durMin = Math.floor(dur / 60000);
-                        const durSec = Math.floor((dur % 60000) / 1000);
-                        timeEl.innerText = `${posMin}:${posSec.toString().padStart(2,'0')} / ${durMin}:${durSec.toString().padStart(2,'0')}`;
-                    } else {
-                        progressBar.style.width = '0%';
-                        timeEl.innerText = '0:00';
-                    }
-
-                    // active device info
-                    if (state.device) {
-                        activeDeviceName = state.device.name;
-                        activeDeviceNameEl.innerText = state.device.name;
-                    } else {
-                        activeDeviceNameEl.innerText = 'unknown';
-                    }
-
-                    // also update device list if menu open
-                    if (deviceMenu.style.display === 'flex') {
-                        populateDeviceMenu();
-                    }
-                } catch (e) {
-                    console.warn('refresh error', e);
+                    return res;
+                } catch (error) {
+                    console.error('Fetch error:', error);
+                    return { ok: false, status: 0 };
                 }
             }
 
-            // ---------- device menu with live active state ----------
-            async function populateDeviceMenu() {
-                if (!accessToken) return;
+            // ---------- DEVICE MANAGEMENT (FIXED) ----------
+            async function getAvailableDevices() {
                 try {
                     const res = await spotifyFetch('me/player/devices');
-                    if (!res.ok) return;
-                    const data = await res.json();
-                    
-                    deviceMenu.innerHTML = '';
-                    if (!data.devices || data.devices.length === 0) {
-                        deviceMenu.innerHTML = '<div class="device-option" style="cursor:default;">📡 no devices</div>';
-                        return;
+                    if (!res.ok) {
+                        console.error('Failed to fetch devices:', res.status);
+                        return [];
                     }
-
-                    data.devices.forEach(device => {
-                        const item = document.createElement('button');
-                        const isActive = device.is_active;
-                        item.className = `device-option ${isActive ? 'active-device' : ''}`;
-                        
-                        let icon = '🔹';
-                        if (device.type === 'Computer') icon = '💻';
-                        else if (device.type === 'Smartphone') icon = '📱';
-                        else if (device.type === 'Speaker') icon = '🔊';
-                        else if (device.type === 'TV') icon = '📺';
-
-                        item.innerHTML = `<span>${icon} ${device.name}</span> 
-                                        <span>${isActive ? '●' : ''}</span>`;
-                        
-                        item.onclick = async (e) => {
-                            e.stopPropagation();
-                            // transfer playback to this device (with play:true)
-                            await spotifyFetch('me/player', 'PUT', { 
-                                device_ids: [device.id], 
-                                play: true 
-                            });
-                            deviceMenu.style.display = 'none';
-                            // wait then refresh
-                            setTimeout(() => {
-                                refreshPlaybackState();
-                                populateDeviceMenu(); // for active dot
-                            }, 200);
-                        };
-                        deviceMenu.appendChild(item);
-                    });
-                } catch (e) {
-                    deviceMenu.innerHTML = '<div class="device-option">⚠️ error</div>';
+                    const data = await res.json();
+                    return data.devices || [];
+                } catch (error) {
+                    console.error('Error fetching devices:', error);
+                    return [];
                 }
+            }
+
+            async function transferPlayback(deviceId) {
+                try {
+                    // First, try to transfer playback
+                    const res = await spotifyFetch('me/player', 'PUT', {
+                        device_ids: [deviceId],
+                        play: true
+                    });
+                    
+                    if (res.ok || res.status === 204) {
+                        console.log('Transfer successful to device:', deviceId);
+                        
+                        // Update the active device name
+                        const devices = await getAvailableDevices();
+                        const transferredDevice = devices.find(d => d.id === deviceId);
+                        if (transferredDevice) {
+                            activeDeviceNameEl.innerText = transferredDevice.name;
+                        }
+                        
+                        // Wait a moment for the transfer to complete, then refresh state
+                        setTimeout(() => {
+                            refreshPlaybackState();
+                        }, 500);
+                        
+                        return true;
+                    } else {
+                        console.error('Transfer failed:', res.status);
+                        return false;
+                    }
+                } catch (error) {
+                    console.error('Transfer error:', error);
+                    return false;
+                }
+            }
+
+            // ---------- DEVICE MENU POPULATION (FIXED) ----------
+            async function populateDeviceMenu() {
+                if (!accessToken) {
+                    deviceMenu.innerHTML = '<div class="device-option error-message">No access token</div>';
+                    return;
+                }
+
+                const devices = await getAvailableDevices();
+                
+                if (!devices || devices.length === 0) {
+                    deviceMenu.innerHTML = '<div class="device-option" style="cursor:default; color:#999;">📡 No devices available</div>' +
+                                          '<div class="device-option" style="cursor:default; font-size:0.7rem; color:#666;">Open Spotify on any device</div>';
+                    return;
+                }
+
+                deviceMenu.innerHTML = '';
+                
+                devices.forEach(device => {
+                    const item = document.createElement('button');
+                    const isActive = device.is_active;
+                    
+                    item.className = `device-option ${isActive ? 'active-device' : ''}`;
+                    
+                    // Choose icon based on device type
+                    let icon = '🔹';
+                    const type = device.type?.toLowerCase() || '';
+                    if (type.includes('computer')) icon = '💻';
+                    else if (type.includes('smartphone') || type.includes('phone')) icon = '📱';
+                    else if (type.includes('speaker')) icon = '🔊';
+                    else if (type.includes('tv')) icon = '📺';
+                    else if (type.includes('tablet')) icon = '📱';
+                    else if (type.includes('audio')) icon = '🎧';
+
+                    item.innerHTML = `<span>${icon} ${device.name}</span> 
+                                    <span>${isActive ? '●' : ''}</span>`;
+                    
+                    item.onclick = async (e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        
+                        // Show feedback
+                        item.style.opacity = '0.7';
+                        
+                        const success = await transferPlayback(device.id);
+                        
+                        if (success) {
+                            deviceMenu.style.display = 'none';
+                        } else {
+                            // Show error briefly
+                            const originalText = item.innerHTML;
+                            item.innerHTML = '<span>⚠️ Transfer failed</span>';
+                            item.style.opacity = '1';
+                            setTimeout(() => {
+                                item.innerHTML = originalText;
+                            }, 1500);
+                        }
+                    };
+                    
+                    deviceMenu.appendChild(item);
+                });
             }
 
             window.toggleDevices = async () => {
@@ -510,11 +470,15 @@
                     deviceMenu.style.display = 'none';
                     return;
                 }
-                await populateDeviceMenu();
+                
+                // Show loading state
+                deviceMenu.innerHTML = '<div class="device-option" style="justify-content:center;">Loading devices...</div>';
                 deviceMenu.style.display = 'flex';
+                
+                await populateDeviceMenu();
             };
 
-            // close menu on outside click
+            // Close menu on outside click
             document.addEventListener('click', (e) => {
                 if (deviceMenu.style.display === 'flex' && 
                     !deviceMenu.contains(e.target) && 
@@ -523,7 +487,123 @@
                 }
             });
 
-            // ---------- SDK for events + low-latency, but controls use REST ----------
+            // ---------- PLAYBACK CONTROL (REST API) ----------
+            window.handlePlayPause = async () => {
+                try {
+                    const res = await spotifyFetch('me/player');
+                    if (res.status === 204 || !res.ok) {
+                        // No active device - try to use SDK if available
+                        if (player) {
+                            player.togglePlay();
+                        }
+                        return;
+                    }
+                    
+                    const data = await res.json();
+                    if (data.is_playing) {
+                        await spotifyFetch('me/player/pause', 'PUT');
+                    } else {
+                        await spotifyFetch('me/player/play', 'PUT');
+                    }
+                    
+                    // Refresh state after action
+                    setTimeout(refreshPlaybackState, 200);
+                } catch (error) {
+                    console.error('Play/pause error:', error);
+                    if (player) player.togglePlay();
+                }
+            };
+
+            window.handleNext = async () => {
+                await spotifyFetch('me/player/next', 'POST');
+                setTimeout(refreshPlaybackState, 300);
+            };
+
+            window.handlePrev = async () => {
+                await spotifyFetch('me/player/previous', 'POST');
+                setTimeout(refreshPlaybackState, 300);
+            };
+
+            window.seekFromProgress = async (event) => {
+                const container = document.getElementById('progress-container');
+                const rect = container.getBoundingClientRect();
+                const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+                
+                try {
+                    // Get current playback state to know duration
+                    const res = await spotifyFetch('me/player');
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data.item && data.item.duration_ms) {
+                            const positionMs = Math.floor(ratio * data.item.duration_ms);
+                            await spotifyFetch(`me/player/seek?position_ms=${positionMs}`, 'PUT');
+                            setTimeout(refreshPlaybackState, 200);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Seek error:', error);
+                }
+            };
+
+            // ---------- REFRESH PLAYBACK STATE (REST API) ----------
+            async function refreshPlaybackState() {
+                if (!accessToken) return;
+                
+                try {
+                    const res = await spotifyFetch('me/player');
+                    
+                    if (res.status === 204 || !res.ok) {
+                        // No active playback
+                        trackEl.innerText = 'No active device';
+                        artistEl.innerText = 'Open Spotify and play something';
+                        albumEl.style.backgroundImage = '';
+                        playBtn.innerText = '▶';
+                        progressBar.style.width = '0%';
+                        timeEl.innerText = '0:00';
+                        activeDeviceNameEl.innerText = 'none';
+                        return;
+                    }
+                    
+                    const state = await res.json();
+                    
+                    // Update track info
+                    if (state.item) {
+                        trackEl.innerText = state.item.name;
+                        artistEl.innerText = state.item.artists.map(a => a.name).join(', ');
+                        
+                        if (state.item.album?.images?.[0]?.url) {
+                            albumEl.style.backgroundImage = `url(${state.item.album.images[0].url})`;
+                        }
+                    }
+                    
+                    // Update play button
+                    playBtn.innerText = state.is_playing ? '⏸' : '▶';
+                    
+                    // Update progress
+                    if (state.item?.duration_ms) {
+                        const pos = state.progress_ms || 0;
+                        const dur = state.item.duration_ms;
+                        const percent = (pos / dur) * 100;
+                        progressBar.style.width = percent + '%';
+                        
+                        const posMin = Math.floor(pos / 60000);
+                        const posSec = Math.floor((pos % 60000) / 1000);
+                        const durMin = Math.floor(dur / 60000);
+                        const durSec = Math.floor((dur % 60000) / 1000);
+                        timeEl.innerText = `${posMin}:${posSec.toString().padStart(2,'0')} / ${durMin}:${durSec.toString().padStart(2,'0')}`;
+                    }
+                    
+                    // Update active device name
+                    if (state.device) {
+                        activeDeviceNameEl.innerText = state.device.name;
+                    }
+                    
+                } catch (error) {
+                    console.error('Refresh error:', error);
+                }
+            }
+
+            // ---------- SPOTIFY SDK (for events, but REST for control) ----------
             window.onSpotifyWebPlaybackSDKReady = () => {
                 if (!accessToken) return;
 
@@ -535,15 +615,14 @@
 
                 sdkPlayer.addListener('ready', ({ device_id }) => {
                     console.log('SDK ready, id =', device_id);
-                    currentDeviceId = device_id;
-                    // initial refresh
+                    currentSdkDeviceId = device_id;
                     refreshPlaybackState();
                 });
 
                 sdkPlayer.addListener('player_state_changed', state => {
                     if (state) {
                         lastState = state;
-                        // use SDK for instant UI, but we also trust REST for consistency
+                        // Use SDK for instant UI updates
                         const track = state.track_window.current_track;
                         if (track) {
                             trackEl.innerText = track.name;
@@ -557,6 +636,7 @@
                         if (state.duration > 0) {
                             const percent = (state.position / state.duration) * 100;
                             progressBar.style.width = percent + '%';
+                            
                             const posMin = Math.floor(state.position / 60000);
                             const posSec = Math.floor((state.position % 60000) / 1000);
                             const durMin = Math.floor(state.duration / 60000);
@@ -566,21 +646,19 @@
                     }
                 });
 
+                sdkPlayer.addListener('authentication_error', ({ message }) => {
+                    console.error('SDK auth error:', message);
+                });
+
                 sdkPlayer.connect();
                 window.player = sdkPlayer;
             };
 
-            // periodic poll to keep device name & active status (every 2s)
-            setInterval(() => {
-                refreshPlaybackState();
-            }, 2000);
-
-            // immediate refresh on load
+            // Poll for updates (every 3 seconds)
             if (accessToken) {
-                setTimeout(refreshPlaybackState, 300);
+                refreshPlaybackState();
+                setInterval(refreshPlaybackState, 3000);
             }
-
-            // also handle if token exists but SDK not ready? fine.
         })();
     </script>
 </body>
