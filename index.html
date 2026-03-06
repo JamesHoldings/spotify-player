@@ -21,16 +21,25 @@
         #artist-name { font-size: 0.8rem; color: var(--text-dim); margin: 2px 0 0 0; }
         #context-label { font-size: 0.7rem; color: var(--text-dim); margin-top: 4px; }
 
-        /* Device Selection UI */
+        /* Device Selection UI with Scrolling */
         #device-btn { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 1.2rem; transition: 0.2s; }
         #device-btn:hover { color: var(--sp-green); }
         
         #device-menu { 
             position: absolute; top: 100%; right: 0; background: #333; border-radius: 8px; 
-            width: 180px; display: none; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.5); z-index: 100; padding: 8px;
-            margin-top: 5px; border: 1px solid #444;
+            width: 200px; display: none; flex-direction: column; box-shadow: 0 10px 25px rgba(0,0,0,0.5); 
+            z-index: 100; padding: 8px; margin-top: 5px; border: 1px solid #444;
+            /* Scrollable Properties */
+            max-height: 180px; 
+            overflow-y: auto;
         }
-        .device-option { padding: 10px; font-size: 0.8rem; cursor: pointer; border-radius: 4px; border: none; background: none; color: white; text-align: left; width: 100%; display: flex; justify-content: space-between; }
+
+        /* Custom Scrollbar for the Device List */
+        #device-menu::-webkit-scrollbar { width: 6px; }
+        #device-menu::-webkit-scrollbar-thumb { background: #555; border-radius: 10px; }
+        #device-menu::-webkit-scrollbar-track { background: transparent; }
+
+        .device-option { padding: 10px; font-size: 0.8rem; cursor: pointer; border-radius: 4px; border: none; background: none; color: white; text-align: left; width: 100%; display: flex; justify-content: space-between; align-items: center; }
         .device-option:hover { background: #444; }
         .active-device { color: var(--sp-green); font-weight: bold; }
 
@@ -108,7 +117,6 @@
             if (!localStorage.getItem('access_token')) document.getElementById('login-overlay').style.display = 'flex';
         }
 
-        // --- DEVICE MANAGEMENT ---
         async function toggleDevices() {
             const menu = document.getElementById('device-menu');
             if (menu.style.display === 'flex') { menu.style.display = 'none'; return; }
@@ -119,11 +127,15 @@
             });
             const data = await res.json();
             
-            menu.innerHTML = '<p style="font-size:0.6rem; color:#b3b3b3; margin:5px;">SELECT DEVICE</p>';
+            menu.innerHTML = '<p style="font-size:0.6rem; color:#b3b3b3; margin:5px; position:sticky; top:0; background:#333;">SELECT DEVICE</p>';
             data.devices.forEach(d => {
                 const item = document.createElement('button');
                 item.className = `device-option ${d.is_active ? 'active-device' : ''}`;
-                item.innerHTML = `<span>${d.name}</span> <span>${d.type === 'Computer' ? '💻' : '📱'}</span>`;
+                let icon = '📱';
+                if(d.type === 'Computer') icon = '💻';
+                if(d.type === 'Speaker') icon = '🔊';
+                
+                item.innerHTML = `<span>${d.name}</span> <span>${icon}</span>`;
                 item.onclick = () => transferPlayback(d.id);
                 menu.appendChild(item);
             });
@@ -146,7 +158,7 @@
             player = new Spotify.Player({ name: 'James Dashboard Player', getOAuthToken: cb => cb(token) });
 
             player.addListener('ready', ({ device_id }) => {
-                // Register this dashboard as a device but don't autoplay
+                // Register dashboard as device but stay paused
                 transferPlayback(device_id);
             });
 
@@ -165,7 +177,6 @@
             player.connect();
         };
 
-        // Close device menu on click-away
         window.addEventListener('click', (e) => {
             if (!e.target.closest('#device-btn') && !e.target.closest('#device-menu')) {
                 document.getElementById('device-menu').style.display = 'none';
