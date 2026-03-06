@@ -409,6 +409,7 @@
 
 <script src="https://sdk.scdn.co/spotify-player.js"></script>
 <script>
+    // --- CONFIGURATION (same auth as Synced Cloud Dashboard) ---
     const clientId = 'ccb3b4e6e11b48fc9ba11bc154e65534';
     const redirectUri = window.location.origin + window.location.pathname;
 
@@ -417,84 +418,68 @@
     let lastKnownPositionMs = 0;
     let lastStatePaused = true;
     let isScrubbing = false;
-
     let pollIntervalId = null;
     let progressTickerId = null;
     let lastApiState = null;
 
-    function isInIframe() {
-        try {
-            return window.self !== window.top;
-        } catch (e) {
-            return true;
-        }
-    }
+    // ---------- AUTH (PKCE) — same as Synced Cloud Dashboard, no popups ----------
 
-    // ---------- AUTH (PKCE) + TOKEN MANAGEMENT ----------
+    const generateRandomString = (length) => {
+        const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        return Array.from(crypto.getRandomValues(new Uint8Array(length))).map((x) => possible[x % possible.length]).join('');
+    };
 
-    const generateRandomString = (l) =>
-        Array.from(crypto.getRandomValues(new Uint8Array(l)))
-            .map(x => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[x % 62])
-            .join('');
+    const sha256 = async (plain) => {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(plain);
+        return window.crypto.subtle.digest('SHA-256', data);
+    };
 
-    const sha256 = async (plain) =>
-        window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(plain));
-
-    const base64encode = (input) =>
-        btoa(String.fromCharCode(...new Uint8Array(input)))
-            .replace(/=/g, '')
-            .replace(/\+/g, '-')
-            .replace(/\//g, '_');
+    const base64encode = (input) => {
+        return btoa(String.fromCharCode(...new Uint8Array(input)))
+            .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+    };
 
     async function redirectToAuth() {
-        const v = generateRandomString(64);
-        const hashed = await sha256(v);
-        const c = base64encode(hashed);
-        localStorage.setItem('code_verifier', v);
+        const codeVerifier = generateRandomString(64);
+        const hashed = await sha256(codeVerifier);
+        const codeChallenge = base64encode(hashed);
+
+        window.localStorage.setItem('code_verifier', codeVerifier);
 
         const params = new URLSearchParams({
             response_type: 'code',
             client_id: clientId,
             scope: 'streaming user-read-playback-state user-modify-playback-state',
             code_challenge_method: 'S256',
-            code_challenge: c,
-            redirect_uri: redirectUri
+            code_challenge: codeChallenge,
+            redirect_uri: redirectUri,
         });
 
-        const authUrl = `https://accounts.spotify.com/authorize?${params.toString()}`;
-
-        if (isInIframe()) {
-            var w = 500, h = 700;
-            var left = (screen.width - w) / 2;
-            var top = (screen.height - h) / 2;
-            var popup = window.open(authUrl, 'spotify-auth', 'width=' + w + ',height=' + h + ',left=' + left + ',top=' + top + ',toolbar=no,menubar=no,scrollbars=yes');
-            if (popup) window._spotifyAuthPopup = popup;
-            return;
-        }
-
-        window.location.href = authUrl;
+        window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
     }
 
     async function getToken(code) {
-        const v = localStorage.getItem('code_verifier');
+        const codeVerifier = window.localStorage.getItem('code_verifier');
         const response = await fetch('https://accounts.spotify.com/api/token', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: new URLSearchParams({
                 client_id: clientId,
                 grant_type: 'authorization_code',
-                code,
+                code: code,
                 redirect_uri: redirectUri,
-                code_verifier: v
-            })
+                code_verifier: codeVerifier,
+            }),
         });
         return await response.json();
     }
 
+    // ---------- TOKEN REFRESH (for API polling / controls) ----------
+
     async function refreshAccessToken() {
         const refreshToken = localStorage.getItem('refresh_token');
         if (!refreshToken) return null;
-
         const response = await fetch('https://accounts.spotify.com/api/token', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -504,17 +489,13 @@
                 refresh_token: refreshToken
             })
         });
-
         const data = await response.json();
         if (data.access_token) {
             const expiresAt = Date.now() + (data.expires_in || 3600) * 1000;
             localStorage.setItem('access_token', data.access_token);
             localStorage.setItem('token_expires_at', String(expiresAt));
         }
-        if (data.refresh_token) {
-            localStorage.setItem('refresh_token', data.refresh_token);
-        }
-
+        if (data.refresh_token) localStorage.setItem('refresh_token', data.refresh_token);
         return data.access_token || null;
     }
 
@@ -523,11 +504,9 @@
         const expiresAtRaw = localStorage.getItem('token_expires_at');
         const expiresAt = expiresAtRaw ? parseInt(expiresAtRaw, 10) : 0;
         const now = Date.now();
-
         if (!token || !expiresAt || now > (expiresAt - 60000)) {
             token = await refreshAccessToken();
         }
-
         return token;
     }
 
@@ -582,12 +561,10 @@
             stopProgressTicker();
             return;
         }
-
         const track = data.item;
         const progressMs = data.progress_ms != null ? data.progress_ms : 0;
         const durationMs = track.duration_ms || 0;
         const isPlaying = !!data.is_playing;
-
         document.getElementById('track-name').textContent = track.name || 'Nothing Playing';
         document.getElementById('artist-name').textContent = (track.artists && track.artists[0]) ? track.artists[0].name : '';
         if (track.album && track.album.images && track.album.images.length) {
@@ -597,19 +574,13 @@
         }
         document.getElementById('play-btn').textContent = isPlaying ? '⏸' : '▶';
         document.getElementById('device-label').textContent = data.device ? `Playing on ${data.device.name}` : 'No active device';
-
         currentDurationMs = durationMs;
         lastKnownPositionMs = progressMs;
         lastStatePaused = !isPlaying;
         lastApiState = data;
-
         updateProgressUI(progressMs, durationMs);
-
-        if (isPlaying && durationMs > 0) {
-            startProgressTicker();
-        } else {
-            stopProgressTicker();
-        }
+        if (isPlaying && durationMs > 0) startProgressTicker();
+        else stopProgressTicker();
     }
 
     function startProgressTicker() {
@@ -679,10 +650,8 @@
             menu.style.display = 'none';
             return;
         }
-
         const data = await apiFetch('https://api.spotify.com/v1/me/player/devices');
         if (!data || !data.devices) return;
-
         menu.innerHTML = '';
         data.devices.forEach(d => {
             const item = document.createElement('button');
@@ -728,7 +697,6 @@
 
     function attachScrubHandlers() {
         const progressContainer = document.getElementById('progress-container');
-
         function seekFromEvent(e) {
             const rect = progressContainer.getBoundingClientRect();
             const x = (e.touches && e.touches[0]) ? e.touches[0].clientX - rect.left : e.clientX - rect.left;
@@ -743,46 +711,34 @@
                 }
             });
         }
-
         progressContainer.addEventListener('mousedown', (e) => {
             e.preventDefault();
             isScrubbing = true;
             seekFromEvent(e);
         });
-
         window.addEventListener('mousemove', (e) => {
             if (!isScrubbing) return;
             seekFromEvent(e);
         });
-
-        window.addEventListener('mouseup', () => {
-            isScrubbing = false;
-        });
-
+        window.addEventListener('mouseup', () => { isScrubbing = false; });
         progressContainer.addEventListener('touchstart', (e) => {
             isScrubbing = true;
             seekFromEvent(e.touches[0]);
         }, { passive: false });
-
         window.addEventListener('touchmove', (e) => {
             if (!isScrubbing) return;
             e.preventDefault();
             seekFromEvent(e.touches[0]);
         }, { passive: false });
-
-        window.addEventListener('touchend', () => {
-            isScrubbing = false;
-        });
+        window.addEventListener('touchend', () => { isScrubbing = false; });
     }
 
     function updateProgressUI(positionMs, durationMs) {
         const progressBar = document.getElementById('progress-bar');
         const timeCurrent = document.getElementById('time-current');
         const timeTotal = document.getElementById('time-total');
-
         currentDurationMs = durationMs || 0;
         lastKnownPositionMs = positionMs || 0;
-
         const ratio = durationMs ? (positionMs / durationMs) : 0;
         progressBar.style.width = `${Math.max(0, Math.min(100, ratio * 100))}%`;
         timeCurrent.textContent = formatTime(positionMs);
@@ -804,54 +760,24 @@
         }
     }
 
-    // ---------- INIT ----------
+    // ---------- INIT (auth same as Synced Cloud Dashboard) ----------
 
     async function init() {
-        window.addEventListener('message', function (e) {
-            if (!e.data || e.data.type !== 'spotify-auth-done') return;
-            try {
-                if (window._spotifyAuthPopup && !window._spotifyAuthPopup.closed) window._spotifyAuthPopup.close();
-            } catch (err) {}
-            window._spotifyAuthPopup = null;
-            showLoginOverlay(false);
-            startPolling();
-        });
-
         const urlParams = new URLSearchParams(window.location.search);
         const code = urlParams.get('code');
 
         if (code) {
-            try {
-                const data = await getToken(code);
-                if (data.access_token) {
-                    const expiresAt = Date.now() + (data.expires_in || 3600) * 1000;
-                    localStorage.setItem('access_token', data.access_token);
-                    if (data.refresh_token) {
-                        localStorage.setItem('refresh_token', data.refresh_token);
-                    }
-                    localStorage.setItem('token_expires_at', String(expiresAt));
-                    window.history.replaceState({}, document.title, window.location.pathname || '/');
-
-                    if (window.opener && !window.opener.closed) {
-                        try {
-                            window.opener.postMessage({ type: 'spotify-auth-done' }, '*');
-                        } catch (err) {}
-                        window.close();
-                        return;
-                    }
-
-                    showLoginOverlay(false);
-                }
-            } catch (err) {
-                console.error('Error getting token:', err);
-            } finally {
-                if (!window.opener) {
-                    window.history.replaceState({}, document.title, window.location.pathname || '/');
-                }
+            const data = await getToken(code);
+            if (data.access_token) {
+                localStorage.setItem('access_token', data.access_token);
+                localStorage.setItem('refresh_token', data.refresh_token);
+                const expiresAt = Date.now() + (data.expires_in || 3600) * 1000;
+                localStorage.setItem('token_expires_at', String(expiresAt));
             }
+            window.history.replaceState({}, document.title, window.location.pathname);
         }
 
-        const token = await ensureValidToken();
+        const token = localStorage.getItem('access_token');
         if (!token) {
             showLoginOverlay(true);
         } else {
@@ -862,7 +788,7 @@
     }
 
     window.onSpotifyWebPlaybackSDKReady = async () => {
-        const initialToken = await ensureValidToken();
+        const initialToken = localStorage.getItem('access_token');
         if (!initialToken) {
             showLoginOverlay(true);
             return;
