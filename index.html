@@ -261,6 +261,17 @@
             padding: 8px;
             text-align: center;
         }
+
+        #token-status {
+            font-size: 0.65rem;
+            color: #f15e6c;
+            margin-top: 4px;
+            cursor: pointer;
+            text-decoration: underline;
+        }
+        #token-status.valid {
+            color: #1DB954;
+        }
     </style>
 </head>
 <body>
@@ -271,6 +282,7 @@
                 <p id="track-name">Spotify</p>
                 <p id="artist-name">widget ready</p>
                 <div id="active-device-indicator"><span class="dot"></span> <span id="active-device-name">no device</span></div>
+                <div id="token-status">checking token...</div>
             </div>
             <button id="device-btn" onclick="toggleDevices()">🔊</button>
             <div id="device-menu"></div>
@@ -294,11 +306,55 @@
     <script>
         (function() {
             // --------------------------------------------------------------
-            // TOKEN – stored in localStorage
-            const accessToken = localStorage.getItem('access_token');
-            if (!accessToken) {
-                document.getElementById('track-name').innerText = '⚠️ token missing';
-                document.getElementById('artist-name').innerText = 're-login';
+            // HARDCODED CLIENT ID - reliable, not from storage
+            const CLIENT_ID = 'ccb3b4e6e11b48fc9ba11bc154e65534';
+            
+            // Token management - try multiple sources
+            let accessToken = null;
+            
+            // Try to get token from various sources
+            function getAccessToken() {
+                // 1. Try URL hash (most common for OAuth redirects)
+                const hashParams = new URLSearchParams(window.location.hash.substring(1));
+                const hashToken = hashParams.get('access_token');
+                if (hashToken) {
+                    localStorage.setItem('spotify_token', hashToken);
+                    // Clean URL
+                    window.location.hash = '';
+                    return hashToken;
+                }
+                
+                // 2. Try localStorage
+                const storedToken = localStorage.getItem('spotify_token');
+                if (storedToken) {
+                    return storedToken;
+                }
+                
+                // 3. Try sessionStorage as fallback
+                const sessionToken = sessionStorage.getItem('spotify_token');
+                if (sessionToken) {
+                    localStorage.setItem('spotify_token', sessionToken);
+                    return sessionToken;
+                }
+                
+                return null;
+            }
+            
+            accessToken = getAccessToken();
+            
+            // Update token status UI
+            const tokenStatusEl = document.getElementById('token-status');
+            if (accessToken) {
+                tokenStatusEl.textContent = '✓ token valid';
+                tokenStatusEl.className = 'valid';
+            } else {
+                tokenStatusEl.textContent = '✗ need login - click here';
+                tokenStatusEl.className = '';
+                tokenStatusEl.onclick = () => {
+                    const redirectUri = encodeURIComponent(window.location.href);
+                    const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${redirectUri}&scope=streaming%20user-read-email%20user-read-private%20user-library-read%20user-library-modify%20user-read-playback-state%20user-modify-playback-state%20user-read-currently-playing%20app-remote-control%20playlist-read-private%20playlist-read-collaborative`;
+                    window.location.href = authUrl;
+                };
             }
 
             // Core state
@@ -320,6 +376,11 @@
 
             // ---------- HELPER: Spotify API fetch with better error handling ----------
             async function spotifyFetch(endpoint, method = 'GET', body = null, queryParams = null) {
+                if (!accessToken) {
+                    console.error('No access token');
+                    return { ok: false, status: 401 };
+                }
+
                 let url = `https://api.spotify.com/v1/${endpoint}`;
                 
                 // Add query parameters if provided
@@ -344,7 +405,11 @@
                     const res = await fetch(url, options);
                     if (res.status === 401) {
                         console.error('Token expired');
-                        trackEl.innerText = '⚠️ token expired';
+                        tokenStatusEl.textContent = '✗ token expired - click to refresh';
+                        tokenStatusEl.className = '';
+                        // Clear invalid token
+                        localStorage.removeItem('spotify_token');
+                        sessionStorage.removeItem('spotify_token');
                     }
                     return res;
                 } catch (error) {
