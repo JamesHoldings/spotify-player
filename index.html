@@ -1,66 +1,83 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>Synced Spotify Dashboard</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Synced Cloud Dashboard</title>
     <style>
-        body { background: #121212; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; }
-        #player-container { border: 1px solid #1db954; padding: 20px; border-radius: 15px; text-align: center; }
-        button { background: #1db954; color: white; border: none; padding: 10px 20px; border-radius: 20px; cursor: pointer; font-weight: bold; }
+        :root { --spotify-green: #1DB954; --bg-black: #121212; --card-grey: #181818; }
+        body { background: var(--bg-black); color: white; font-family: 'Segoe UI', sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        #player-card { background: var(--card-grey); padding: 2rem; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); text-align: center; width: 320px; border: 1px solid #333; }
+        .btn { background: var(--spotify-green); color: black; border: none; padding: 12px 24px; border-radius: 50px; font-weight: bold; cursor: pointer; transition: transform 0.2s; text-decoration: none; display: inline-block; }
+        .btn:hover { transform: scale(1.05); }
+        #track-info { margin: 20px 0; min-height: 50px; }
+        #track-name { font-size: 1.2rem; font-weight: bold; margin-bottom: 5px; }
+        #artist-name { color: #b3b3b3; font-size: 0.9rem; }
     </style>
 </head>
 <body>
 
-    <div id="player-container">
-        <h2>Spotify Sync</h2>
-        <div id="status">Loading...</div>
-        <br>
-        <button id="auth-btn" style="display:none;">Login with Spotify</button>
-        <div id="controls" style="display:none;">
-            <p id="track-name">No Song Playing</p>
-            <button onclick="player.togglePlay()">Play/Pause</button>
+    <div id="player-card">
+        <div id="status">Connecting...</div>
+        
+        <div id="login-section" style="display:none;">
+            <p>Sync your Spotify account</p>
+            <button class="btn" onclick="redirectToAuth()">Login with Spotify</button>
+        </div>
+
+        <div id="player-section" style="display:none;">
+            <div id="track-info">
+                <div id="track-name">Nothing Playing</div>
+                <div id="artist-name">Open Spotify on your phone</div>
+            </div>
+            <button class="btn" id="play-pause">Play / Pause</button>
         </div>
     </div>
 
     <script src="https://sdk.scdn.co/spotify-player.js"></script>
-    
     <script>
-        const clientId = 'ccb3b4e6e11b48fc9ba11bc154e65534'; // <--- PASTE YOUR ID HERE
+        // --- CONFIGURATION ---
+        const clientId = 'ccb3b4e6e11b48fc9ba11bc154e65534'; // <--- PASTE YOUR CLIENT ID
         const redirectUri = window.location.origin + window.location.pathname;
-        let player;
 
-        // 1. Check if we have a token in storage
-        let accessToken = localStorage.getItem('access_token');
-
-        if (!accessToken) {
-            const urlParams = new URLSearchParams(window.location.search);
-            const code = urlParams.get('code');
-            
-            if (code) {
-                // We just got redirected back with a code, exchange it for a token
-                exchangeCodeForToken(code);
-            } else {
-                // Brand new user, show login
-                document.getElementById('status').innerText = "Please authorize:";
-                document.getElementById('auth-btn').style.display = 'block';
-            }
+        // --- AUTH LOGIC (PKCE) ---
+        const generateRandomString = (length) => {
+            const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            return Array.from(crypto.getRandomValues(new Uint8Array(length))).map((x) => possible[x % possible.length]).join('');
         }
 
-        document.getElementById('auth-btn').addEventListener('click', () => {
-            const scope = 'streaming user-read-email user-read-private user-modify-playback-state user-read-playback-state';
-            const authUrl = new URL("https://accounts.spotify.com/authorize");
-            const params = {
+        const sha256 = async (plain) => {
+            const encoder = new TextEncoder();
+            const data = encoder.encode(plain);
+            return window.crypto.subtle.digest('SHA-256', data);
+        }
+
+        const base64encode = (input) => {
+            return btoa(String.fromCharCode(...new Uint8Array(input)))
+                .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+        }
+
+        async function redirectToAuth() {
+            const codeVerifier = generateRandomString(64);
+            const hashed = await sha256(codeVerifier);
+            const codeChallenge = base64encode(hashed);
+
+            window.localStorage.setItem('code_verifier', codeVerifier);
+
+            const params = new URLSearchParams({
                 response_type: 'code',
                 client_id: clientId,
-                scope: scope,
+                scope: 'streaming user-read-playback-state user-modify-playback-state',
+                code_challenge_method: 'S256',
+                code_challenge: codeChallenge,
                 redirect_uri: redirectUri,
-            };
-            authUrl.search = new URLSearchParams(params).toString();
-            window.location.href = authUrl.toString();
-        });
+            });
 
-        async function exchangeCodeForToken(code) {
-            // In a real PKCE flow, you'd verify the 'state' and 'code_challenge'
-            // For a basic cloud dashboard, we fetch the token:
+            window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
+        }
+
+        async function getToken(code) {
+            const codeVerifier = window.localStorage.getItem('code_verifier');
             const response = await fetch('https://accounts.spotify.com/api/token', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -69,32 +86,59 @@
                     grant_type: 'authorization_code',
                     code: code,
                     redirect_uri: redirectUri,
-                })
+                    code_verifier: codeVerifier,
+                }),
             });
-            const data = await response.json();
-            if (data.access_token) {
+            return await response.json();
+        }
+
+        // --- INITIALIZATION ---
+        async function init() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const code = urlParams.get('code');
+
+            if (code) {
+                const data = await getToken(code);
                 localStorage.setItem('access_token', data.access_token);
-                window.location.search = ''; // Clean URL
+                localStorage.setItem('refresh_token', data.refresh_token);
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+
+            const token = localStorage.getItem('access_token');
+            if (!token) {
+                document.getElementById('login-section').style.display = 'block';
+                document.getElementById('status').innerText = 'Logged Out';
             }
         }
 
-        // 2. Initialize Player
         window.onSpotifyWebPlaybackSDKReady = () => {
-            if (!accessToken) return;
+            const token = localStorage.getItem('access_token');
+            if (!token) return;
 
-            player = new Spotify.Player({
+            const player = new Spotify.Player({
                 name: 'Cloud Dashboard Player',
-                getOAuthToken: cb => { cb(accessToken); }
+                getOAuthToken: cb => { cb(token); },
+                volume: 0.5
             });
 
             player.addListener('ready', ({ device_id }) => {
-                document.getElementById('status').innerText = "Synced to Cloud";
-                document.getElementById('controls').style.display = 'block';
+                document.getElementById('status').innerText = 'Ready & Synced';
+                document.getElementById('player-section').style.display = 'block';
+                document.getElementById('login-section').style.display = 'none';
                 console.log('Ready with Device ID', device_id);
             });
 
+            player.addListener('player_state_changed', state => {
+                if (!state) return;
+                document.getElementById('track-name').innerText = state.track_window.current_track.name;
+                document.getElementById('artist-name').innerText = state.track_window.current_track.artists[0].name;
+            });
+
+            document.getElementById('play-pause').onclick = () => player.togglePlay();
             player.connect();
         };
+
+        init();
     </script>
 </body>
 </html>
