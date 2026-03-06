@@ -55,6 +55,7 @@
             background-position: center;
             background-color: #121212;
             box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
+            transition: background-image 0.3s ease;
         }
 
         .meta { min-width: 0; }
@@ -95,13 +96,12 @@
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+            transition: background 0.15s ease, color 0.15s ease;
         }
 
         #device-btn:hover {
             background: rgba(255, 255, 255, 0.08);
             color: var(--sp-green);
-            transform: translateY(-1px);
         }
 
         #device-menu {
@@ -138,11 +138,9 @@
         }
 
         .device-option:hover { background: #3b3b3b; color: var(--sp-green); }
-
         .active-device { color: var(--sp-green); font-weight: 600; }
 
         #progress-row { display: flex; align-items: center; gap: 8px; margin-top: -2px; }
-
         #time-current, #time-total { font-size: 0.7rem; color: var(--text-dim); min-width: 34px; text-align: center; }
 
         #progress-container {
@@ -175,7 +173,6 @@
         }
 
         .bottom-row { display: flex; align-items: center; justify-content: space-between; margin-top: 3px; }
-
         .controls { display: flex; align-items: center; gap: 8px; }
 
         .btn-nav {
@@ -260,7 +257,15 @@
 <body>
 
 <div id="player-container">
-    
+    <div id="login-overlay">
+        <h2 style="margin: 0 0 6px 0; font-size: 0.95rem;">Connect Spotify</h2>
+        <p style="margin: 0 0 14px 0; font-size: 0.8rem; color: var(--text-dim); text-align: center;">To sync playback and controls, connect your Spotify account.</p>
+        <button class="login-btn" onclick="redirectToAuth()">
+            <span class="icon">🎧</span>
+            <span>Connect & Sync</span>
+        </button>
+    </div>
+
     <div class="top-row">
         <div id="album-art"></div>
         <div class="meta">
@@ -359,25 +364,41 @@
     async function apiFetch(url, options = {}) {
         const token = await ensureValidToken();
         if (!token) { showLoginOverlay(true); return null; }
-        const res = await fetch(url, { ...options, headers: { 'Authorization': `Bearer ${token}`, ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) }});
-        if (res.status === 401) { showLoginOverlay(true); return null; }
-        return res.status === 204 ? {} : res.json();
+        try {
+            const res = await fetch(url, { ...options, headers: { 'Authorization': `Bearer ${token}`, ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) }});
+            if (res.status === 401) { showLoginOverlay(true); return null; }
+            if (res.status === 204) return {};
+            return res.json();
+        } catch (e) { return null; }
     }
 
     function showLoginOverlay(show) {
-        document.getElementById('login-overlay').style.display = show ? 'flex' : 'none';
+        const overlay = document.getElementById('login-overlay');
+        if (overlay) overlay.style.display = show ? 'flex' : 'none';
         const chip = document.getElementById('status-chip');
         const text = document.getElementById('status-text');
         if (show) { chip.classList.add('offline'); text.textContent = 'Disconnected'; stopPolling(); }
-        else { chip.classList.remove('offline'); text.textContent = 'Connected'; startPolling(); }
+        else { chip.classList.remove('offline'); text.textContent = 'Connected'; }
     }
 
     function applyApiState(data) {
-        if (!data || !data.item) return;
+        if (!data || !data.item) {
+            document.getElementById('track-name').textContent = "Nothing Playing";
+            document.getElementById('artist-name').textContent = "Open Spotify to start";
+            document.getElementById('album-art').style.backgroundImage = 'none';
+            document.getElementById('play-btn').textContent = '▶';
+            updateProgressUI(0, 0);
+            stopProgressTicker();
+            return;
+        }
         const track = data.item;
         document.getElementById('track-name').textContent = track.name;
-        document.getElementById('artist-name').textContent = track.artists[0].name;
-        document.getElementById('album-art').style.backgroundImage = `url(${track.album.images[0].url})`;
+        document.getElementById('artist-name').textContent = track.artists.map(a => a.name).join(', ');
+        
+        if (track.album && track.album.images.length > 0) {
+            document.getElementById('album-art').style.backgroundImage = `url(${track.album.images[0].url})`;
+        }
+        
         document.getElementById('play-btn').textContent = data.is_playing ? '⏸' : '▶';
         document.getElementById('device-label').textContent = data.device ? `On ${data.device.name}` : '';
         
@@ -401,22 +422,37 @@
 
     async function pollPlaybackState() {
         const data = await apiFetch('https://api.spotify.com/v1/me/player');
-        if (data && data.item) applyApiState(data);
+        applyApiState(data);
     }
 
-    function startPolling() { stopPolling(); pollIntervalId = setInterval(pollPlaybackState, 3000); pollPlaybackState(); }
+    function startPolling() { 
+        stopPolling(); 
+        pollIntervalId = setInterval(pollPlaybackState, 5000); 
+        pollPlaybackState(); 
+    }
+    
     function stopPolling() { clearInterval(pollIntervalId); stopProgressTicker(); }
 
     async function handlePlayToggle() {
         const data = await apiFetch('https://api.spotify.com/v1/me/player');
-        const method = data && data.is_playing ? 'PUT' : 'PUT';
-        const endpoint = data && data.is_playing ? 'pause' : 'play';
-        await apiFetch(`https://api.spotify.com/v1/me/player/${endpoint}`, { method });
-        setTimeout(pollPlaybackState, 500);
+        const isPlaying = data && data.is_playing;
+        const endpoint = isPlaying ? 'pause' : 'play';
+        await apiFetch(`https://api.spotify.com/v1/me/player/${endpoint}`, { method: 'PUT' });
+        
+        // Immediate UI feedback
+        document.getElementById('play-btn').textContent = isPlaying ? '▶' : '⏸';
+        setTimeout(pollPlaybackState, 400); 
     }
 
-    async function handleNext() { await apiFetch('https://api.spotify.com/v1/me/player/next', { method: 'POST' }); setTimeout(pollPlaybackState, 500); }
-    async function handlePrevious() { await apiFetch('https://api.spotify.com/v1/me/player/previous', { method: 'POST' }); setTimeout(pollPlaybackState, 500); }
+    async function handleNext() { 
+        await apiFetch('https://api.spotify.com/v1/me/player/next', { method: 'POST' }); 
+        setTimeout(pollPlaybackState, 400); 
+    }
+    
+    async function handlePrevious() { 
+        await apiFetch('https://api.spotify.com/v1/me/player/previous', { method: 'POST' }); 
+        setTimeout(pollPlaybackState, 400); 
+    }
 
     function updateProgressUI(pos, dur) {
         const ratio = dur ? (pos / dur) * 100 : 0;
@@ -468,10 +504,16 @@
                 localStorage.setItem('token_expires_at', String(Date.now() + (data.expires_in * 1000)));
                 window.history.replaceState({}, document.title, window.location.pathname);
                 showLoginOverlay(false);
+                startPolling();
             }
         } else {
             const token = await ensureValidToken();
-            showLoginOverlay(!token);
+            if (token) {
+                showLoginOverlay(false);
+                startPolling();
+            } else {
+                showLoginOverlay(true);
+            }
         }
         attachScrubHandlers();
     }
@@ -481,7 +523,9 @@
             name: 'James Dashboard',
             getOAuthToken: async cb => { const t = await ensureValidToken(); if (t) cb(t); }
         });
-        player.addListener('ready', () => { showLoginOverlay(false); startPolling(); });
+        player.addListener('ready', () => { 
+            pollPlaybackState(); 
+        });
         player.addListener('authentication_error', () => showLoginOverlay(true));
         player.connect();
     };
