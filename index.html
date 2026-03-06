@@ -3,60 +3,71 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spotify Dashboard Pro</title>
+    <title>Spotify Compact Dashboard</title>
     <style>
-        :root { --green: #1DB954; --black: #121212; --card: #181818; --light: #b3b3b3; }
-        body { background: transparent; color: white; font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+        :root { --sp-green: #1DB954; --bg-grey: #404040; --text-main: #ffffff; --text-dim: #b3b3b3; }
+        body { background: transparent; color: var(--text-main); font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; align-items: center; justify-content: center; height: 100vh; overflow: hidden; }
         
-        #player-card { 
-            background: var(--card); width: 300px; padding: 25px; border-radius: 15px; 
-            border: 1px solid #333; text-align: center; box-shadow: 0 15px 35px rgba(0,0,0,0.6);
+        /* Main Container matching the Compact UI */
+        #player-container { 
+            background: var(--bg-grey); width: 340px; height: 150px; padding: 12px; 
+            border-radius: 12px; display: flex; flex-direction: column; gap: 8px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5); position: relative;
         }
 
-        #album-art { 
-            width: 220px; height: 220px; margin: 0 auto 20px; border-radius: 10px; 
-            background-color: #282828; background-size: cover; background-position: center;
-            box-shadow: 0 8px 20px rgba(0,0,0,0.5); border: 1px solid #333;
-        }
-
-        #track-name { font-size: 1.2rem; font-weight: bold; margin: 0 0 5px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        #artist-name { color: var(--light); font-size: 0.95rem; margin-bottom: 25px; }
+        /* Top Section: Art and Meta */
+        .top-row { display: flex; gap: 12px; height: 80px; }
+        #album-art { width: 80px; height: 80px; border-radius: 6px; background-size: cover; background-color: #282828; flex-shrink: 0; }
+        
+        .meta { flex-grow: 1; display: flex; flex-direction: column; justify-content: center; overflow: hidden; }
+        #track-name { font-size: 0.95rem; font-weight: bold; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        #artist-name { font-size: 0.8rem; color: var(--text-dim); margin: 2px 0 0 0; }
 
         /* Progress Bar */
-        #progress-container { width: 100%; height: 5px; background: #3e3e3e; border-radius: 5px; margin-bottom: 25px; cursor: pointer; }
-        #progress-bar { width: 0%; height: 100%; background: var(--green); border-radius: 5px; transition: width 0.4s linear; }
+        #progress-container { width: 100%; height: 4px; background: #5e5e5e; border-radius: 2px; }
+        #progress-bar { width: 0%; height: 100%; background: var(--text-main); border-radius: 2px; }
 
-        .controls { display: flex; justify-content: center; align-items: center; gap: 30px; }
-        .btn-main { background: white; border: none; width: 50px; height: 50px; border-radius: 50%; cursor: pointer; font-size: 1.4rem; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
-        .btn-main:hover { transform: scale(1.1); }
-        .btn-nav { background: none; border: none; color: var(--light); cursor: pointer; font-size: 1.8rem; transition: 0.2s; }
-        .btn-nav:hover { color: white; }
+        /* Bottom Section: Controls */
+        .bottom-row { display: flex; align-items: center; justify-content: space-between; padding-top: 4px; }
+        .controls { display: flex; align-items: center; gap: 15px; }
         
-        #status { font-size: 0.7rem; color: var(--green); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 15px; font-weight: bold; }
-        .login-btn { background: var(--green); color: black; border: none; padding: 14px 28px; border-radius: 50px; font-weight: bold; cursor: pointer; font-size: 1rem; }
+        .btn-nav { background: none; border: none; color: var(--text-main); cursor: pointer; font-size: 1.2rem; padding: 0; }
+        #play-btn { background: white; color: black; border: none; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+        
+        #spotify-logo { width: 20px; height: 20px; opacity: 0.8; }
+        #time-display { font-size: 0.75rem; color: var(--text-dim); }
+
+        /* Utility */
+        #login-section { position: absolute; inset: 0; background: var(--bg-grey); border-radius: 12px; display: flex; align-items: center; justify-content: center; z-index: 10; }
+        .login-btn { background: var(--sp-green); color: black; border: none; padding: 8px 16px; border-radius: 20px; font-weight: bold; cursor: pointer; }
     </style>
 </head>
 <body>
 
-    <div id="player-card">
-        <div id="status">Syncing...</div>
-        
+    <div id="player-container">
         <div id="login-section" style="display:none;">
             <button class="login-btn" onclick="redirectToAuth()">Connect Spotify</button>
         </div>
 
-        <div id="player-section" style="display:none;">
+        <div class="top-row">
             <div id="album-art"></div>
-            <div id="track-name">No Track</div>
-            <div id="artist-name">No Artist</div>
-            
-            <div id="progress-container"><div id="progress-bar"></div></div>
+            <div class="meta">
+                <p id="track-name">Nothing Playing</p>
+                <p id="artist-name">Open Spotify on phone</p>
+                <p style="font-size: 0.7rem; color: var(--text-dim); margin-top: 8px;">My Liked Songs • James</p>
+            </div>
+            <img id="spotify-logo" src="https://storage.googleapis.com/pr-newsroom-wp/1/2018/11/Spotify_Logo_RGB_White.png" alt="">
+        </div>
 
+        <div id="progress-container"><div id="progress-bar"></div></div>
+
+        <div class="bottom-row">
             <div class="controls">
                 <button class="btn-nav" onclick="player.previousTrack()">⏮</button>
-                <button id="play-pause" class="btn-main" onclick="player.togglePlay()">▶</button>
                 <button class="btn-nav" onclick="player.nextTrack()">⏭</button>
+                <div id="time-display">00:00</div>
             </div>
+            <button id="play-btn" onclick="player.togglePlay()">▶</button>
         </div>
     </div>
 
@@ -66,7 +77,7 @@
         const redirectUri = window.location.origin + window.location.pathname;
         let player;
 
-        // PKCE Helpers
+        // PKCE Auth
         const rand = (l) => Array.from(crypto.getRandomValues(new Uint8Array(l))).map(x => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[x % 62]).join('');
         const hash = async (p) => window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(p));
         const enc = (i) => btoa(String.fromCharCode(...new Uint8Array(i))).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -92,10 +103,7 @@
                 localStorage.setItem('access_token', d.access_token);
                 window.history.replaceState({}, document.title, window.location.pathname);
             }
-            if (!localStorage.getItem('access_token')) {
-                document.getElementById('login-section').style.display = 'block';
-                document.getElementById('status').innerText = 'Logged Out';
-            }
+            if (!localStorage.getItem('access_token')) document.getElementById('login-section').style.display = 'flex';
         }
 
         window.onSpotifyWebPlaybackSDKReady = () => {
@@ -105,11 +113,6 @@
             player = new Spotify.Player({ name: 'Cloud Dashboard Player', getOAuthToken: cb => cb(token) });
 
             player.addListener('ready', ({ device_id }) => {
-                document.getElementById('player-section').style.display = 'block';
-                document.getElementById('login-section').style.display = 'none';
-                document.getElementById('status').innerText = 'Synced';
-
-                // FORCE PLAY TO THIS DEVICE
                 fetch('https://api.spotify.com/v1/me/player', {
                     method: 'PUT',
                     body: JSON.stringify({ device_ids: [device_id], play: true }),
@@ -123,8 +126,14 @@
                 document.getElementById('track-name').innerText = track.name;
                 document.getElementById('artist-name').innerText = track.artists[0].name;
                 document.getElementById('album-art').style.backgroundImage = `url(${track.album.images[0].url})`;
-                document.getElementById('play-pause').innerText = state.paused ? '▶' : '⏸';
-                document.getElementById('progress-bar').style.width = (state.position / state.duration) * 100 + '%';
+                document.getElementById('play-btn').innerText = state.paused ? '▶' : '⏸';
+                
+                const percent = (state.position / state.duration) * 100;
+                document.getElementById('progress-bar').style.width = percent + '%';
+                
+                const mins = Math.floor(state.position / 60000);
+                const secs = ((state.position % 60000) / 1000).toFixed(0);
+                document.getElementById('time-display').innerText = mins + ":" + (secs < 10 ? '0' : '') + secs;
             });
 
             player.connect();
