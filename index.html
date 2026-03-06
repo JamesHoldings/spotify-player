@@ -271,7 +271,7 @@
         }
 
         #time-display {
-            display: none; /* legacy single timer hidden (we use two timers now) */
+            display: none;
         }
 
         #status-chip {
@@ -298,7 +298,6 @@
             box-shadow: none;
         }
 
-        /* Login Overlay */
         #login-overlay {
             position: absolute;
             inset: 0;
@@ -419,6 +418,11 @@
     let lastStatePaused = true;
     let isScrubbing = false;
 
+    // Polling + local timer: so we see state when playing on ANY device (Echo, phone, etc.)
+    let pollIntervalId = null;
+    let progressTickerId = null;
+    let lastApiState = null;
+
     // ---------- AUTH (PKCE) + TOKEN MANAGEMENT ----------
 
     const generateRandomString = (l) =>
@@ -490,7 +494,6 @@
             localStorage.setItem('token_expires_at', String(expiresAt));
         }
         if (data.refresh_token) {
-            // Some refresh responses rotate refresh tokens
             localStorage.setItem('refresh_token', data.refresh_token);
         }
 
@@ -503,7 +506,6 @@
         const expiresAt = expiresAtRaw ? parseInt(expiresAtRaw, 10) : 0;
         const now = Date.now();
 
-        // Refresh 60s before expiry
         if (!token || !expiresAt || now > (expiresAt - 60000)) {
             token = await refreshAccessToken();
         }
@@ -511,7 +513,7 @@
         return token;
     }
 
-    // ---------- DEVICE + API HELPERS ----------
+    // ---------- API HELPERS ----------
 
     async function apiFetch(url, options = {}) {
         const token = await ensureValidToken();
@@ -519,22 +521,131 @@
             showLoginOverlay(true);
             return null;
         }
-        const res = await fetch(url, {
-            ...options,
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': options.body ? 'application/json' : 'application/json',
-                ...(options.headers || {})
-            }
-        });
+        let res;
+        try {
+            res = await fetch(url, {
+                ...options,
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+                    ...(options.headers || {})
+                }
+            });
+        } catch (err) {
+            console.error('Spotify API request failed:', err);
+            return null;
+        }
         if (res.status === 401 || res.status === 403) {
-            // Token invalid; force login
             showLoginOverlay(true);
             return null;
         }
         if (res.status === 204) return {};
-        return await res.json();
+        if (!res.ok) {
+            console.warn('Spotify API error', res.status, url);
+            return null;
+        }
+        try {
+            return await res.json();
+        } catch (e) {
+            return null;
+        }
     }
+
+    // ---------- PLAYBACK STATE FROM WEB API (works for any device: Echo, phone, browser) ----------
+
+    function applyApiState(data) {
+        if (!data || !data.item) {
+            // No active playback
+            document.getElementById('track-name').textContent = 'Nothing Playing';
+            document.getElementById('artist-name').textContent = 'Paused or no device';
+            document.getElementById('album-art').style.backgroundImage = 'none';
+            document.getElementById('play-btn').textContent = '▶';
+            document.getElementById('device-label').textContent = data && data.device ? `Playing on ${data.device.name}` : 'No active device';
+            updateProgressUI(0, 0);
+            stopProgressTicker();
+            return;
+        }
+
+        const track = data.item;
+        const progressMs = data.progress_ms != null ? data.progress_ms : 0;
+        const durationMs = track.duration_ms || 0;
+        const isPlaying = !!data.is_playing;
+
+        document.getElementById('track-name').textContent = track.name || 'Nothing Playing';
+        document.getElementById('artist-name').textContent = (track.artists && track.artists[0]) ? track.artists[0].name : '';
+        if (track.album && track.album.images && track.album.images.length) {
+            document.getElementById('album-art').style.backgroundImage = `url(${track.album.images[0].url})`;
+        } else {
+            document.getElementById('album-art').style.backgroundImage = 'none';
+        }
+        document.getElementById('play-btn').textContent = isPlaying ? '⏸' : '▶';
+        document.getElementById('device-label').textContent = data.device ? `Playing on ${data.device.name}` : 'No active device';
+
+        currentDurationMs = durationMs;
+        lastKnownPositionMs = progressMs;
+        lastStatePaused = !isPlaying;
+        lastApiState = data;
+
+        updateProgressUI(progressMs, durationMs);
+
+        if (isPlaying && durationMs > 0) {
+            startProgressTicker();
+        } else {
+            stopProgressTicker();
+        }
+    }
+
+    function startProgressTicker() {
+        stopProgressTicker();
+        progressTickerId = setInterval(() => {
+            lastKnownPositionMs = Math.min(lastKnownPositionMs + 1000, currentDurationMs);
+            updateProgressUI(lastKnownPositionMs, currentDurationMs);
+            if (lastKnownPositionMs >= currentDurationMs) stopProgressTicker();
+        }, 1000);
+    }
+
+    function stopProgressTicker() {
+        if (progressTickerId) {
+            clearInterval(progressTickerId);
+            progressTickerId = null;
+        }
+    }
+
+    async function pollPlaybackState() {
+        const data = await apiFetch('https://api.spotify.com/v1/me/player');
+        if (!data) return;
+        if (data.item) {
+            applyApiState(data);
+            return;
+        }
+        if (data.device) {
+            document.getElementById('device-label').textContent = `Playing on ${data.device.name}`;
+            if (data.progress_ms != null && data.is_playing === false) {
+                updateProgressUI(data.progress_ms || 0, 0);
+                stopProgressTicker();
+            }
+            return;
+        }
+        if (Object.keys(data).length === 0) {
+            document.getElementById('device-label').textContent = 'No active device';
+        }
+    }
+
+    function startPolling() {
+        stopPolling();
+        pollIntervalId = setInterval(pollPlaybackState, 800);
+        pollPlaybackState();
+    }
+
+    function stopPolling() {
+        if (pollIntervalId) {
+            clearInterval(pollIntervalId);
+            pollIntervalId = null;
+        }
+        stopProgressTicker();
+    }
+
+    // ---------- DEVICE MENU ----------
 
     async function transferPlayback(deviceId, playImmediately = true) {
         await apiFetch('https://api.spotify.com/v1/me/player', {
@@ -542,7 +653,7 @@
             body: JSON.stringify({ device_ids: [deviceId], play: playImmediately })
         });
         document.getElementById('device-menu').style.display = 'none';
-        updateDeviceLabel();
+        setTimeout(pollPlaybackState, 300);
     }
 
     async function toggleDevices() {
@@ -566,35 +677,30 @@
         menu.style.display = 'flex';
     }
 
-    async function updateDeviceLabel() {
-        const label = document.getElementById('device-label');
-        const data = await apiFetch('https://api.spotify.com/v1/me/player/devices');
-        if (!data || !data.devices || !data.devices.length) {
-            label.textContent = 'No active device';
-            return;
+    // ---------- CONTROLS VIA WEB API (controls whatever device is active: Echo, phone, this tab) ----------
+
+    async function handlePlayToggle() {
+        const data = await apiFetch('https://api.spotify.com/v1/me/player');
+        if (!data) return;
+        if (data.is_playing) {
+            await apiFetch('https://api.spotify.com/v1/me/player/pause', { method: 'PUT' });
+        } else {
+            await apiFetch('https://api.spotify.com/v1/me/player/play', { method: 'PUT', body: JSON.stringify({}) });
         }
-        const active = data.devices.find(d => d.is_active) || data.devices[0];
-        label.textContent = active ? `Playing on ${active.name}` : 'No active device';
+        setTimeout(pollPlaybackState, 150);
     }
 
-    // ---------- PLAYER CONTROL HANDLERS (BUTTONS) ----------
-
-    function handlePlayToggle() {
-        if (!player) return;
-        player.togglePlay().catch(console.error);
+    async function handleNext() {
+        const r = await apiFetch('https://api.spotify.com/v1/me/player/next', { method: 'POST' });
+        if (r !== null) setTimeout(pollPlaybackState, 150);
     }
 
-    function handleNext() {
-        if (!player) return;
-        player.nextTrack().catch(console.error);
+    async function handlePrevious() {
+        const r = await apiFetch('https://api.spotify.com/v1/me/player/previous', { method: 'POST' });
+        if (r !== null) setTimeout(pollPlaybackState, 150);
     }
 
-    function handlePrevious() {
-        if (!player) return;
-        player.previousTrack().catch(console.error);
-    }
-
-    // ---------- SCRUB BAR (SEEK) ----------
+    // ---------- SCRUB BAR (seek via Web API) ----------
 
     function formatTime(ms) {
         const totalSeconds = Math.floor(ms / 1000);
@@ -607,15 +713,22 @@
         const progressContainer = document.getElementById('progress-container');
 
         function seekFromEvent(e) {
-            if (!player || !currentDurationMs) return;
             const rect = progressContainer.getBoundingClientRect();
-            const x = e.clientX - rect.left;
+            const x = (e.touches && e.touches[0]) ? e.touches[0].clientX - rect.left : e.clientX - rect.left;
             const ratio = Math.max(0, Math.min(1, x / rect.width));
-            const newPos = Math.floor(ratio * currentDurationMs);
-            player.seek(newPos).catch(console.error);
+            const duration = currentDurationMs || 1;
+            const newPos = Math.floor(ratio * duration);
+            apiFetch(`https://api.spotify.com/v1/me/player/seek?position_ms=${newPos}`, { method: 'PUT' }).then((result) => {
+                if (result !== null) {
+                    lastKnownPositionMs = newPos;
+                    updateProgressUI(newPos, currentDurationMs);
+                    setTimeout(pollPlaybackState, 150);
+                }
+            });
         }
 
         progressContainer.addEventListener('mousedown', (e) => {
+            e.preventDefault();
             isScrubbing = true;
             seekFromEvent(e);
         });
@@ -626,20 +739,19 @@
         });
 
         window.addEventListener('mouseup', () => {
-            if (!isScrubbing) return;
             isScrubbing = false;
         });
 
-        // Optional: tap on touch devices
         progressContainer.addEventListener('touchstart', (e) => {
             isScrubbing = true;
             seekFromEvent(e.touches[0]);
-        }, { passive: true });
+        }, { passive: false });
 
         window.addEventListener('touchmove', (e) => {
             if (!isScrubbing) return;
+            e.preventDefault();
             seekFromEvent(e.touches[0]);
-        }, { passive: true });
+        }, { passive: false });
 
         window.addEventListener('touchend', () => {
             isScrubbing = false;
@@ -660,7 +772,7 @@
         timeTotal.textContent = durationMs ? formatTime(durationMs) : '0:00';
     }
 
-    // ---------- UI STATE HELPERS ----------
+    // ---------- UI STATE ----------
 
     function showLoginOverlay(show) {
         document.getElementById('login-overlay').style.display = show ? 'flex' : 'none';
@@ -669,40 +781,17 @@
         if (show) {
             statusChip.classList.add('offline');
             statusText.textContent = 'Disconnected';
+            stopPolling();
         } else {
             statusChip.classList.remove('offline');
             statusText.textContent = 'Connected';
+            startPolling();
         }
-    }
-
-    function updateFromPlayerState(state) {
-        if (!state) return;
-
-        const track = state.track_window.current_track;
-        const trackNameEl = document.getElementById('track-name');
-        const artistNameEl = document.getElementById('artist-name');
-        const albumArtEl = document.getElementById('album-art');
-        const playBtn = document.getElementById('play-btn');
-
-        trackNameEl.textContent = track?.name || 'Nothing Playing';
-        artistNameEl.textContent = (track?.artists && track.artists.length ? track.artists[0].name : '') || 'Ready & Synced';
-
-        if (track?.album?.images && track.album.images.length) {
-            albumArtEl.style.backgroundImage = `url(${track.album.images[0].url})`;
-        } else {
-            albumArtEl.style.backgroundImage = 'none';
-        }
-
-        lastStatePaused = state.paused;
-        playBtn.textContent = state.paused ? '▶' : '⏸';
-
-        updateProgressUI(state.position, state.duration || (track?.duration_ms || 0));
     }
 
     // ---------- INIT ----------
 
     async function init() {
-        // Handle post-auth redirect
         const urlParams = new URLSearchParams(window.location.search);
         const code = urlParams.get('code');
 
@@ -721,7 +810,6 @@
             } catch (err) {
                 console.error('Error getting token:', err);
             } finally {
-                // Clean URL
                 window.history.replaceState({}, document.title, window.location.pathname);
             }
         }
@@ -752,36 +840,28 @@
             volume: 0.8
         });
 
-        player.addListener('ready', async ({ device_id }) => {
-            console.log('Ready with Device ID', device_id);
+        player.addListener('ready', ({ device_id }) => {
             showLoginOverlay(false);
-            // Trade session to this dashboard, but don't auto-play
-            await apiFetch('https://api.spotify.com/v1/me/player', {
-                method: 'PUT',
-                body: JSON.stringify({ device_ids: [device_id], play: false })
+            // Do NOT transfer playback here — leave the user's current device (Echo, phone, etc.) active.
+            // "James Dashboard" will appear in the device list if they want to switch to this tab.
+            startPolling();
+        });
+
+        player.addListener('not_ready', ({ device_id }) => {});
+        player.addListener('player_state_changed', (state) => {
+            if (state) applyApiState({
+                item: state.track_window.current_track,
+                progress_ms: state.position,
+                is_playing: !state.paused,
+                device: { name: 'James Dashboard' }
             });
-            updateDeviceLabel();
-
-            // Try to get current state once on load
-            const state = await player.getCurrentState();
-            if (state) updateFromPlayerState(state);
         });
-
-        player.addListener('not_ready', ({ device_id }) => {
-            console.log('Device ID has gone offline', device_id);
-        });
-
-        player.addListener('player_state_changed', state => {
-            if (!state) return;
-            updateFromPlayerState(state);
-        });
-
-        player.addListener('initialization_error', ({ message }) => { console.error(message); });
+        player.addListener('initialization_error', ({ message }) => console.error(message));
         player.addListener('authentication_error', ({ message }) => {
             console.error(message);
             showLoginOverlay(true);
         });
-        player.addListener('account_error', ({ message }) => { console.error(message); });
+        player.addListener('account_error', ({ message }) => console.error(message));
 
         player.connect();
     };
