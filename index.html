@@ -55,7 +55,7 @@
             background-position: center;
             background-color: #121212;
             box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
-            transition: background-image 0.4s ease-in-out;
+            transition: background-image 0.4s ease;
         }
 
         .meta { min-width: 0; }
@@ -201,10 +201,7 @@
             font-weight: 700;
             font-size: 1.2rem;
             box-shadow: 0 8px 20px rgba(0, 0, 0, 0.9);
-            transition: transform 0.1s;
         }
-
-        #play-btn:active { transform: scale(0.95); }
 
         #status-chip {
             font-size: 0.7rem;
@@ -222,34 +219,34 @@
             height: 6px;
             border-radius: 50%;
             background: var(--sp-green);
-            box-shadow: 0 0 10px rgba(29, 185, 84, 0.9);
         }
 
-        #status-chip.offline #status-dot { background: #ff4f4f; box-shadow: none; }
+        #status-chip.offline #status-dot { background: #ff4f4f; }
 
         #login-overlay {
             position: absolute;
             inset: 0;
-            background: radial-gradient(circle at top, rgba(0, 0, 0, 0.3), rgba(5, 5, 5, 0.96));
+            background: rgba(18, 18, 18, 0.95);
             border-radius: inherit;
             display: none;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             z-index: 200;
-            padding: 18px;
-            backdrop-filter: blur(12px);
+            padding: 20px;
+            text-align: center;
         }
 
         .login-btn {
             background: var(--sp-green);
             color: black;
             border: none;
-            padding: 9px 22px;
+            padding: 10px 24px;
             border-radius: 999px;
             font-weight: 700;
             cursor: pointer;
-            font-size: 0.85rem;
+            font-size: 0.9rem;
+            margin-top: 10px;
         }
     </style>
 </head>
@@ -257,21 +254,22 @@
 
 <div id="player-container">
     <div id="login-overlay">
-        <h2 style="margin: 0 0 6px 0; font-size: 0.95rem;">Session Expired</h2>
-        <button class="login-btn" onclick="redirectToAuth()">Reconnect Spotify</button>
+        <h2 style="font-size: 1rem; margin-bottom: 5px;">Spotify Connection</h2>
+        <p style="font-size: 0.8rem; color: var(--text-dim);">Your tablet needs to authorize as a playback device.</p>
+        <button class="login-btn" onclick="redirectToAuth()">Connect Tablet</button>
     </div>
 
     <div class="top-row">
         <div id="album-art"></div>
         <div class="meta">
-            <p id="track-name">Loading...</p>
-            <p id="artist-name">Synchronizing...</p>
-            <div id="device-label">Finding device...</div>
+            <p id="track-name">Nothing Playing</p>
+            <p id="artist-name">Synced</p>
+            <div id="device-label">Searching...</div>
         </div>
         <div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px;">
             <div id="status-chip" class="offline">
                 <div id="status-dot"></div>
-                <span id="status-text">Offline</span>
+                <span id="status-text">Disconnected</span>
             </div>
             <button id="device-btn" onclick="toggleDevices()">📱</button>
         </div>
@@ -298,6 +296,7 @@
 <script src="https://sdk.scdn.co/spotify-player.js"></script>
 <script>
     const clientId = 'ccb3b4e6e11b48fc9ba11bc154e65534';
+    // Ensure this matches your Spotify Dashboard Redirect URI exactly
     const redirectUri = window.location.origin + window.location.pathname;
 
     let player = null;
@@ -307,7 +306,7 @@
     let progressTickerId = null;
     let isScrubbing = false;
 
-    // --- Auth Logic ---
+    // --- PKCE Auth ---
     const generateRandomString = (l) => Array.from(crypto.getRandomValues(new Uint8Array(l))).map(x => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[x % 62]).join('');
     const sha256 = async (plain) => window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(plain));
     const base64encode = (input) => btoa(String.fromCharCode(...new Uint8Array(input))).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -319,7 +318,7 @@
         localStorage.setItem('code_verifier', v);
         const params = new URLSearchParams({
             response_type: 'code', client_id: clientId,
-            scope: 'streaming user-read-playback-state user-modify-playback-state',
+            scope: 'streaming user-read-playback-state user-modify-playback-state user-read-currently-playing',
             code_challenge_method: 'S256', code_challenge: c, redirect_uri: redirectUri
         });
         window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
@@ -351,6 +350,7 @@
                 token = data.access_token;
                 localStorage.setItem('access_token', token);
                 localStorage.setItem('token_expires_at', String(Date.now() + (data.expires_in * 1000)));
+                return token;
             }
         }
         return token;
@@ -358,61 +358,31 @@
 
     async function apiFetch(url, options = {}) {
         const token = await ensureValidToken();
-        if (!token) { showLoginOverlay(true); return null; }
-        try {
-            const res = await fetch(url, { 
-                ...options, 
-                headers: { 
-                    'Authorization': `Bearer ${token}`, 
-                    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-                    ...(options.headers || {})
-                }
-            });
-            if (res.status === 401) { showLoginOverlay(true); return null; }
-            if (res.status === 204) return { is204: true };
-            return res.json();
-        } catch (e) { return null; }
+        if (!token) return null;
+        const res = await fetch(url, { ...options, headers: { 'Authorization': `Bearer ${token}`, ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) }});
+        if (res.status === 401) return null;
+        if (res.status === 204) return { noContent: true };
+        return res.json();
     }
 
-    function showLoginOverlay(show) {
-        document.getElementById('login-overlay').style.display = show ? 'flex' : 'none';
-        const chip = document.getElementById('status-chip');
-        const text = document.getElementById('status-text');
-        if (show) { chip.classList.add('offline'); text.textContent = 'Auth Required'; stopPolling(); }
-        else { chip.classList.remove('offline'); text.textContent = 'Synced'; }
-    }
-
-    // --- Player Logic ---
-    function applyApiState(data) {
-        if (!data || !data.item) {
-            document.getElementById('track-name').textContent = "Idle";
-            document.getElementById('artist-name').textContent = "No playback detected";
-            document.getElementById('album-art').style.backgroundImage = 'none';
-            return;
-        }
-        
+    // --- UI Update logic ---
+    function applyState(data) {
+        if (!data || !data.item) return;
         const track = data.item;
         document.getElementById('track-name').textContent = track.name;
-        document.getElementById('artist-name').textContent = track.artists.map(a => a.name).join(', ');
-        
-        const artUrl = track.album.images[0].url;
-        const artDiv = document.getElementById('album-art');
-        if (artDiv.style.backgroundImage !== `url("${artUrl}")`) {
-            artDiv.style.backgroundImage = `url(${artUrl})`;
-        }
-        
+        document.getElementById('artist-name').textContent = track.artists[0].name;
+        document.getElementById('album-art').style.backgroundImage = `url(${track.album.images[0].url})`;
         document.getElementById('play-btn').textContent = data.is_playing ? '⏸' : '▶';
         document.getElementById('device-label').textContent = data.device ? `On ${data.device.name}` : '';
         
         currentDurationMs = track.duration_ms;
         lastKnownPositionMs = data.progress_ms;
-        
         updateProgressUI(lastKnownPositionMs, currentDurationMs);
-        data.is_playing ? startProgressTicker() : stopProgressTicker();
+        data.is_playing ? startTicker() : stopTicker();
     }
 
-    function startProgressTicker() {
-        if (progressTickerId) return; // Already running
+    function startTicker() {
+        if (progressTickerId) return;
         progressTickerId = setInterval(() => {
             if (!isScrubbing) {
                 lastKnownPositionMs = Math.min(lastKnownPositionMs + 1000, currentDurationMs);
@@ -420,46 +390,7 @@
             }
         }, 1000);
     }
-
-    function stopProgressTicker() { 
-        clearInterval(progressTickerId); 
-        progressTickerId = null; 
-    }
-
-    async function pollPlaybackState() {
-        const data = await apiFetch('https://api.spotify.com/v1/me/player');
-        applyApiState(data);
-    }
-
-    function startPolling() { 
-        stopPolling(); 
-        pollIntervalId = setInterval(pollPlaybackState, 5000); // Truth check every 5s
-        pollPlaybackState(); // Initial check
-    }
-    
-    function stopPolling() { clearInterval(pollIntervalId); stopProgressTicker(); }
-
-    async function handlePlayToggle() {
-        const data = await apiFetch('https://api.spotify.com/v1/me/player');
-        const method = (data && data.is_playing) ? 'PUT' : 'PUT';
-        const endpoint = (data && data.is_playing) ? 'pause' : 'play';
-        
-        // Optimistic UI update
-        document.getElementById('play-btn').textContent = (data && data.is_playing) ? '▶' : '⏸';
-        
-        await apiFetch(`https://api.spotify.com/v1/me/player/${endpoint}`, { method });
-        setTimeout(pollPlaybackState, 400); // Immediate re-sync
-    }
-
-    async function handleNext() { 
-        await apiFetch('https://api.spotify.com/v1/me/player/next', { method: 'POST' }); 
-        setTimeout(pollPlaybackState, 400); 
-    }
-    
-    async function handlePrevious() { 
-        await apiFetch('https://api.spotify.com/v1/me/player/previous', { method: 'POST' }); 
-        setTimeout(pollPlaybackState, 400); 
-    }
+    function stopTicker() { clearInterval(progressTickerId); progressTickerId = null; }
 
     function updateProgressUI(pos, dur) {
         const ratio = dur ? (pos / dur) * 100 : 0;
@@ -473,42 +404,40 @@
         return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
     }
 
+    // --- Controls ---
+    async function handlePlayToggle() {
+        const data = await apiFetch('https://api.spotify.com/v1/me/player');
+        const endpoint = data && data.is_playing ? 'pause' : 'play';
+        await apiFetch(`https://api.spotify.com/v1/me/player/${endpoint}`, { method: 'PUT' });
+        setTimeout(poll, 500);
+    }
+
+    async function handleNext() { await apiFetch('https://api.spotify.com/v1/me/player/next', { method: 'POST' }); setTimeout(poll, 500); }
+    async function handlePrevious() { await apiFetch('https://api.spotify.com/v1/me/player/previous', { method: 'POST' }); setTimeout(poll, 500); }
+
+    async function poll() {
+        const data = await apiFetch('https://api.spotify.com/v1/me/player');
+        if (data && !data.noContent) applyState(data);
+    }
+
     async function toggleDevices() {
         const menu = document.getElementById('device-menu');
         if (menu.style.display === 'flex') { menu.style.display = 'none'; return; }
         const data = await apiFetch('https://api.spotify.com/v1/me/player/devices');
         if (!data) return;
-        menu.innerHTML = data.devices.map(d => `
-            <button class="device-option ${d.is_active ? 'active-device' : ''}" onclick="transferPlayback('${d.id}')">
-                ${d.name} ${d.is_active ? '✓' : ''}
-            </button>
-        `).join('');
+        menu.innerHTML = data.devices.map(d => `<button class="device-option ${d.is_active ? 'active-device' : ''}" onclick="transfer('${d.id}')">${d.name}</button>`).join('');
         menu.style.display = 'flex';
     }
 
-    async function transferPlayback(id) {
+    async function transfer(id) {
         await apiFetch('https://api.spotify.com/v1/me/player', { method: 'PUT', body: JSON.stringify({ device_ids: [id] })});
         document.getElementById('device-menu').style.display = 'none';
-        setTimeout(pollPlaybackState, 600);
+        setTimeout(poll, 800);
     }
 
-    function attachScrubHandlers() {
-        const container = document.getElementById('progress-container');
-        container.onmousedown = (e) => {
-            isScrubbing = true;
-            const rect = container.getBoundingClientRect();
-            const pos = Math.floor(((e.clientX - rect.left) / rect.width) * currentDurationMs);
-            apiFetch(`https://api.spotify.com/v1/me/player/seek?position_ms=${pos}`, { method: 'PUT' });
-            lastKnownPositionMs = pos;
-            updateProgressUI(pos, currentDurationMs);
-        };
-        window.onmouseup = () => isScrubbing = false;
-    }
-
+    // --- Initialization ---
     async function init() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const code = urlParams.get('code');
-        
+        const code = new URLSearchParams(window.location.search).get('code');
         if (code) {
             const data = await getToken(code);
             if (data.access_token) {
@@ -516,30 +445,56 @@
                 localStorage.setItem('refresh_token', data.refresh_token);
                 localStorage.setItem('token_expires_at', String(Date.now() + (data.expires_in * 1000)));
                 window.history.replaceState({}, document.title, window.location.pathname);
-                showLoginOverlay(false);
-                startPolling();
-            }
-        } else {
-            const token = await ensureValidToken();
-            if (token) {
-                showLoginOverlay(false);
-                startPolling();
-            } else {
-                showLoginOverlay(true);
             }
         }
-        attachScrubHandlers();
+        
+        const token = await ensureValidToken();
+        if (!token) {
+            document.getElementById('login-overlay').style.display = 'flex';
+        } else {
+            document.getElementById('status-chip').classList.remove('offline');
+            document.getElementById('status-text').textContent = 'Synced';
+            setInterval(poll, 5000);
+            poll();
+        }
     }
 
-    // Connect to SDK for "Device" visibility
+    // Web Playback SDK logic to make THIS device a playable target
     window.onSpotifyWebPlaybackSDKReady = () => {
         player = new Spotify.Player({
-            name: 'James Dashboard',
-            getOAuthToken: async cb => { const t = await ensureValidToken(); if (t) cb(t); }
+            name: 'Tablet Dashboard Player',
+            getOAuthToken: async cb => { const t = await ensureValidToken(); cb(t); },
+            volume: 0.5
         });
-        player.addListener('ready', () => pollPlaybackState());
+
+        player.addListener('ready', ({ device_id }) => {
+            console.log('Ready with Device ID', device_id);
+            document.getElementById('status-dot').style.boxShadow = '0 0 10px #1DB954';
+        });
+
+        player.addListener('not_ready', ({ device_id }) => {
+            console.log('Device ID has gone offline', device_id);
+        });
+
+        player.addListener('initialization_error', ({ message }) => console.error(message));
+        player.addListener('authentication_error', ({ message }) => {
+            console.error(message);
+            document.getElementById('login-overlay').style.display = 'flex';
+        });
+
         player.connect();
     };
+
+    const container = document.getElementById('progress-container');
+    container.onmousedown = (e) => {
+        isScrubbing = true;
+        const rect = container.getBoundingClientRect();
+        const pos = Math.floor(((e.clientX - rect.left) / rect.width) * currentDurationMs);
+        apiFetch(`https://api.spotify.com/v1/me/player/seek?position_ms=${pos}`, { method: 'PUT' });
+        lastKnownPositionMs = pos;
+        updateProgressUI(pos, currentDurationMs);
+    };
+    window.onmouseup = () => isScrubbing = false;
 
     init();
 </script>
